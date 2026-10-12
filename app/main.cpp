@@ -158,7 +158,7 @@ void main2(Options const &opts, Connection *conn)
 	tmp[0] = '@';
 	// tmp[0] = 0xe0;
 	conn->write(tmp, 1);
-	int n = conn->read(tmp, sizeof(tmp), 100);
+	int n = conn->read(tmp, sizeof(tmp), 1000);
 	if (n >= 16) {
 		int n = 8;
 		for (int i = 0; i < n; i++) {

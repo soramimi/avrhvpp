@@ -34,8 +34,18 @@ void AVRPARA::set_programming_mode(bool f)
 		write_xtal1(0);
 		write_pagel(0);
 		set_data_pin_mode(PinMode::Output);
+		
+		for (int i = 0; i < 6; i++) {
+			msleep(1);
+			write_xtal1(1);
+			msleep(1);
+			write_xtal1(0);
+		}
+		msleep(1);
+		
 		write_reset12v(1);
-		msleep(5);
+		
+		msleep(1);
 	} else {
 		write_reset12v(0);
 		pin_rdybsy_.read();
@@ -70,11 +80,11 @@ bool AVRPARA::read_rdybsy()
 
 bool AVRPARA::wait_ready()
 {
-	for (uint8_t i = 0; i < 10; i++) {
+	for (int i = 0; i < 1000; i++) {
 		if (pin_rdybsy_.read()) {
 			return true;
 		}
-		usleep(100);
+		msleep(1);
 	}
 	return false;
 }
@@ -178,14 +188,6 @@ uint8_t AVRPARA::read_data()
 	return c;
 }
 
-// uint8_t AVRPARA::read_data_()
-// {
-// 	// write_bs1(0);
-// 	int c = read_data();
-// 	// write_bs1(0);
-// 	return c;
-// }
-
 uint8_t AVRPARA::read_signature(int addr)
 {
 	write_bs1(0);
@@ -217,6 +219,8 @@ uint8_t AVRPARA::write_fuse(bool bs1, bool bs2, uint8_t value)
 
 void AVRPARA::chip_erase()
 {
+	write_xa0(0);
+	write_xa1(1);
 	write_bs1(0);
 	write_bs2(0);
 	set_command(0x80);
@@ -234,17 +238,18 @@ void AVRPARA::process(uint8_t c)
 			p[1] = hex[c & 15];
 		};
 		set_programming_mode(true);
-		// chip_erase();
+		chip_erase();
+		msleep(100);
 		WriteHex(tmp + 0, read_signature(0));
 		WriteHex(tmp + 2, read_signature(1));
 		WriteHex(tmp + 4, read_signature(2));
 		write_fuse(0, 0, 0x62);
-		write_fuse(1, 0, 0xd9);
+		write_fuse(1, 1, 0xd9);
 		write_fuse(0, 1, 0xff);
 		WriteHex(tmp + 6, read_fuse(0, 0));
-		WriteHex(tmp + 8, read_fuse(1, 0));
+		WriteHex(tmp + 8, read_fuse(1, 1));
 		WriteHex(tmp + 10, read_fuse(0, 1));
-		WriteHex(tmp + 12, read_fuse(1, 1));
+		WriteHex(tmp + 12, read_fuse(1, 0));
 		tmp[14] = '\r';
 		tmp[15] = '\n';
 		tmp[16] = 0;
