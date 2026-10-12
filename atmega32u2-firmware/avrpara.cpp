@@ -36,16 +36,16 @@ void AVRPARA::set_programming_mode(bool f)
 		set_data_pin_mode(PinMode::Output);
 		
 		for (int i = 0; i < 6; i++) {
-			msleep(1);
 			write_xtal1(1);
-			msleep(1);
+			usleep(1);
 			write_xtal1(0);
+			usleep(1);
 		}
-		msleep(1);
 		
 		write_reset12v(1);
+		usleep(100);
+		wait_ready();
 		
-		msleep(1);
 	} else {
 		write_reset12v(0);
 		pin_rdybsy_.read();
@@ -181,10 +181,10 @@ uint8_t AVRPARA::read_data()
 {
 	set_data_pin_mode(PinMode::Input);
 	write_oe(0);
-	usleep(50);
+	usleep(1);
 	int c = read_data_pins();
 	write_oe(1);
-	usleep(10);
+	usleep(1);
 	return c;
 }
 
@@ -194,14 +194,18 @@ uint8_t AVRPARA::read_signature(int addr)
 	write_bs2(0);
 	set_command(0x08);
 	set_low_address(addr);
+	usleep(1);
 	return read_data();
 }
 
 uint8_t AVRPARA::read_fuse(bool bs1, bool bs2)
 {
+	set_command(0x04);
+	set_data_pin_mode(PinMode::Input);
 	write_bs1(bs1);
 	write_bs2(bs2);
-	set_command(0x04);
+	write_oe(false);
+	usleep(1);
 	return read_data();
 }
 

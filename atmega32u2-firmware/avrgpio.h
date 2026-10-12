@@ -13,7 +13,7 @@ enum {
 template <int PORT, int PIN> class GPIO {
 public:
 private:
-	const uint8_t bit = 1 << PIN;
+	static constexpr uint8_t bit = 1 << PIN;
 	bool pullup_ = false;
 	void setdir(bool output)
 	{
@@ -46,10 +46,11 @@ public:
 	{
 		setdir(false);
 		switch (PORT) {
-		case avr::B: return (PINB & bit) ? 1 : 0;
-		case avr::C: return (PINC & bit) ? 1 : 0;
-		case avr::D: return (PIND & bit) ? 1 : 0;
+		case avr::B: return (PINB & bit);
+		case avr::C: return (PINC & bit);
+		case avr::D: return (PIND & bit);
 		}
+		return false;
 	}
 	void write(bool b)
 	{
