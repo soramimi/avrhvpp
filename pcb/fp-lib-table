@@ -1,0 +1,3 @@
+(fp_lib_table
+  (lib (name "+avrpara")(type "KiCad")(uri "${KIPRJMOD}/MT3608-module-kicad/avrparalib.pretty")(options "")(descr ""))
+)
