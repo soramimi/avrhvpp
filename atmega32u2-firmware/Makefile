@@ -44,3 +44,6 @@ write: main.hex
 fetch:
 	-avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p $(MCU)
 
+readfuse:
+	avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega32u2 -U hfuse:r:-:h -U lfuse:r:-:h
+

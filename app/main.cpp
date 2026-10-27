@@ -19,6 +19,8 @@
 
 constexpr int BITBANG_MODE_TIMEOUT_MS = 10;
 constexpr int PIN_IO_TIMEOUT_MS = 10;
+constexpr int MODE_ENTER_TIMEOUT_MS = 100;
+constexpr int COMMAND_TIMEOUT_MS = 1000;
 
 void msleep(int ms)
 {
@@ -48,6 +50,28 @@ public:
 	int read(void *ptr, int len, int timeout)
 	{
 		return serial_.read(ptr, len, timeout);
+	}
+	
+	// read until '\n' or timeout. trailing CR/LF is removed.
+	bool read_line(std::string *out, int timeout)
+	{
+		out->clear();
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+		while (1) {
+			auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+			if (remain <= 0) return false;
+			char c;
+			int n = serial_.read(&c, 1, (int)remain);
+			if (n < 0) return false;
+			if (n == 0) continue;
+			if (c == '\n') {
+				while (!out->empty() && out->back() == '\r') {
+					out->pop_back();
+				}
+				return true;
+			}
+			out->push_back(c);
+		}
 	}
 	bool sync()
 	{
@@ -90,14 +114,13 @@ public:
 	bool enter_bitbang_mode()
 	{
 		static constexpr std::string_view command = ".BITBANG.";
-		static constexpr std::string_view expect = "BITBANG\r\n";
+		static constexpr std::string_view expect = "BITBANG";
 		
 		if (sync()) {
 			serial_.write(command.data(), (int)command.size());
 			
-			char buf[expect.size()];
-			int n = serial_.read(buf, (int)sizeof(buf), BITBANG_MODE_TIMEOUT_MS);
-			if (n == (int)expect.size() && memcmp(buf, expect.data(), expect.size()) == 0) {
+			std::string line;
+			if (read_line(&line, MODE_ENTER_TIMEOUT_MS) && line == expect) {
 				return true;
 			}
 		}
@@ -108,14 +131,13 @@ public:
 	bool enter_avrpara_mode()
 	{
 		static constexpr std::string_view command = ".AVRPARA.";
-		static constexpr std::string_view expect = "AVRPARA\r\n";
+		static constexpr std::string_view expect = "AVRPARA";
 		
 		if (sync()) {
 			serial_.write(command.data(), (int)command.size());
 
-			char buf[expect.size()];
-			int n = serial_.read(buf, (int)sizeof(buf), BITBANG_MODE_TIMEOUT_MS);
-			if (n == (int)expect.size() && memcmp(buf, expect.data(), expect.size()) == 0) {
+			std::string line;
+			if (read_line(&line, MODE_ENTER_TIMEOUT_MS) && line == expect) {
 				return true;
 			}
 		}
@@ -144,6 +166,7 @@ public:
 
 struct Options {
 	Serial::Option serial_options;
+	bool restore_fuse = false;
 };
 
 
@@ -154,17 +177,34 @@ void main2(Options const &opts, Connection *conn)
 		return;
 	}
 	
-	char tmp[100];
-	tmp[0] = '@';
-	// tmp[0] = 0xe0;
-	conn->write(tmp, 1);
-	int n = conn->read(tmp, sizeof(tmp), 1000);
-	if (n >= 16) {
-		int n = 8;
-		for (int i = 0; i < n; i++) {
-			printf("%c%c", (unsigned char)tmp[i * 2 + 0], (unsigned char)tmp[i * 2 + 1]);
-			putchar(i + 1 < n ? ' ' : '\n');
+	char c;
+	std::string line;
+	
+	if (opts.restore_fuse) {
+		c = (char)0xe0;
+		conn->write(&c, 1);
+		if (conn->read_line(&line, COMMAND_TIMEOUT_MS) && line == "1") {
+			fprintf(stderr, "fuses restored\n");
+		} else {
+			fprintf(stderr, "failed to restore fuses\n");
+			return;
 		}
+	}
+	
+	c = '@';
+	conn->write(&c, 1);
+	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
+		fprintf(stderr, "no response\n");
+		return;
+	}
+	if (line.size() != 14) { // signature x3, fuse low/high/ext, lock
+		fprintf(stderr, "failed to enter programming mode\n");
+		return;
+	}
+	int n = 7;
+	for (int i = 0; i < n; i++) {
+		printf("%c%c", line[i * 2 + 0], line[i * 2 + 1]);
+		putchar(i + 1 < n ? ' ' : '\n');
 	}
 }
 
@@ -198,6 +238,8 @@ int main(int argc, char **argv)
 				fprintf(stderr, "-p requires a port name\n");
 				return 1;
 			}
+		} else if (arg == "--restore-fuse") {
+			opts.restore_fuse = true;
 		} else if (arg == "-s") {
 			if (argi < argc) {
 				opts.serial_options.speed = atoi(argv[argi++]);

@@ -23,7 +23,7 @@ private:
 	avr::GPIO<avr::C, 5> pin_wr_;
 	avr::GPIO<avr::C, 6> pin_bs1_;
 	avr::GPIO<avr::C, 7> pin_bs2_;
-	void set_programming_mode(bool f);
+	bool set_programming_mode(bool f);
 	void write_data_pins(bool iscommand, uint8_t value);
 	bool read_rdybsy();
 	void write_oe(bool b);
@@ -54,8 +54,9 @@ public:
 	uint8_t read_data();
 	uint8_t read_signature(int addr);
 	uint8_t read_fuse(bool bs1, bool bs2);
-	uint8_t write_fuse(bool bs1, bool bs2, uint8_t value);
-	void chip_erase();
+	void load_data_low(uint8_t c);
+	bool write_fuse(bool bs1, bool bs2, uint8_t value);
+	bool chip_erase();
 };
 
 #endif // AVRPARA_H
