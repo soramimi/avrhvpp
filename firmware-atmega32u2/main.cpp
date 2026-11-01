@@ -5,7 +5,7 @@
 #include <avr/interrupt.h>
 #include <string.h>
 #include "avrgpio.h"
-#include "avrpara.h"
+#include "avrhvpp.h"
 
 extern "C" uint8_t usb_read_available_();
 extern "C" uint8_t usb_read_byte_();
@@ -163,12 +163,12 @@ static inline int clamp(int v, int min, int max)
 
 ////
 
-AVRPARA avrpara;
-void AVRPARA::write_byte(char c)
+AVRHVPP avrhvpp;
+void AVRHVPP::write_byte(char c)
 {
 	usb_write_byte(c);
 }
-void AVRPARA::write_string(char const *p)
+void AVRHVPP::write_string(char const *p)
 {
 	usb_write_string(p);
 }
@@ -266,7 +266,7 @@ static SPI spi;
 
 enum class ISPMODE {
 	AVRISP,
-	AVRPARA,
+	AVRHVPP,
 	BITBANG,
 };
 
@@ -822,35 +822,35 @@ void reset_ports()
 
 void isp_poll()
 {
-	static char const *state_avrpara = nullptr;
+	static char const *state_avrhvpp = nullptr;
 	static char const *state_bitbang = nullptr;
 	if (usb_read_available() > 0) {
 		uint8_t c = getch();
 		if (c < 0x40) {
 			if (ispmode != ISPMODE::AVRISP) {
-				if (ispmode == ISPMODE::AVRPARA) {
-					avrpara.reset_command_state();
+				if (ispmode == ISPMODE::AVRHVPP) {
+					avrhvpp.reset_command_state();
 				}
 				ispmode = ISPMODE::AVRISP;
-				state_avrpara = nullptr;
+				state_avrhvpp = nullptr;
 				state_bitbang = nullptr;
 				reset_ports();
 			}
 		}
 		if (ispmode == ISPMODE::AVRISP) {
-			if (state_avrpara) {
-				if (*state_avrpara == c) {
-					state_avrpara++;
-					if (!*state_avrpara) {
-						state_avrpara = nullptr;
-						usb_write_string("AVRPARA\r\n");
-						avrpara.reset_command_state();
-						ispmode = ISPMODE::AVRPARA;
+			if (state_avrhvpp) {
+				if (*state_avrhvpp == c) {
+					state_avrhvpp++;
+					if (!*state_avrhvpp) {
+						state_avrhvpp = nullptr;
+						usb_write_string("AVRHVPP\r\n");
+						avrhvpp.reset_command_state();
+						ispmode = ISPMODE::AVRHVPP;
 						reset_ports();
 					}
 					return;
 				} else {
-					state_avrpara = nullptr;
+					state_avrhvpp = nullptr;
 				}
 			}
 			if (state_bitbang) {
@@ -868,13 +868,13 @@ void isp_poll()
 				}
 			}
 			if (c == '.') {
-				state_avrpara = "AVRPARA.";
+				state_avrhvpp = "AVRHVPP.";
 				state_bitbang = "BITBANG.";
 				return;
 			}
 			avrisp(c);
-		} else if (ispmode == ISPMODE::AVRPARA) {
-			avrpara.process(c);
+		} else if (ispmode == ISPMODE::AVRHVPP) {
+			avrhvpp.process(c);
 		} else if (ispmode == ISPMODE::BITBANG) {
 			bitbang(c);
 		}

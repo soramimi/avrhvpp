@@ -1,2 +1,5 @@
+
+PORT := /dev/ttyACM0
+
 main:
-	app/build/Qt_6_9_0_qt6_gcc_Debug/avrisp -p /dev/ttyACM0
+	./app/_bin/avrhvpp -p $(PORT) -rs -rfl -rfh -rfe

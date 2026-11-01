@@ -1,5 +1,5 @@
-#ifndef AVRPARA_H
-#define AVRPARA_H
+#ifndef AVRHVPP_H
+#define AVRHVPP_H
 
 #include "avrgpio.h"
 
@@ -11,7 +11,7 @@ enum PinMode {
 	Output
 };
 
-class AVRPARA {
+class AVRHVPP {
 private:
 	avr::GPIO<avr::B, 3> pin_rdybsy_;
 	avr::GPIO<avr::B, 4> pin_pagel_;
@@ -45,8 +45,8 @@ private:
 	void write_byte(char c);
 	void write_string(const char *p);
 public:
-	AVRPARA();
-	~AVRPARA();
+	AVRHVPP();
+	~AVRHVPP();
 	void process(uint8_t c);
 	void reset_command_state();
 	void set_command(uint8_t c);
@@ -70,4 +70,4 @@ public:
 	bool chip_erase();
 };
 
-#endif // AVRPARA_H
+#endif // AVRHVPP_H

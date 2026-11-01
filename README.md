@@ -1,7 +1,7 @@
-# avrpara
+# avrhvpp
 
 ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレルプログラマ（HVPP）です。
-通常は STK500 互換の ISP プログラマとして動作し、専用コマンドを送ると高電圧パラレルプログラミングモード（AVRPARA モード）に切り替わります。
+通常は STK500 互換の ISP プログラマとして動作し、専用コマンドを送ると高電圧パラレルプログラミングモード（AVRHVPP モード）に切り替わります。
 
 ヒューズ設定の誤りで ISP が使えなくなったチップ（SPIEN 無効、DWEN 有効など）の読み出しと復旧を主な目的としています。
 
@@ -11,7 +11,7 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 
 | パス | 内容 |
 |---|---|
-| `atmega32u2-firmware/` | プログラマ本体（ATmega32U2）のファームウェア |
+| `firmware-atmega32u2/` | プログラマ本体（ATmega32U2）のファームウェア |
 | `app/` | ホスト用コマンドラインツール（`avrisp`） |
 | `common/` | ファームウェアとホストツールで共有するコマンド定義 |
 | `pcb/` | KiCad の回路図・基板データ、ガーバー |
@@ -49,7 +49,7 @@ J3 をショートすると J2 の RST が ATmega32U2 自身の RESET につな�
 avr-gcc と avrdude が必要です。
 
 ```sh
-cd atmega32u2-firmware
+cd firmware-atmega32u2
 make            # main.hex を生成
 make write      # 外部 ISP プログラマ（avrisp, /dev/ttyACM0）で書き込み（ヒューズ hfuse=0xD9, lfuse=0x5E も設定）
 make readfuse   # ATmega32U2 のヒューズを読み出し
@@ -76,7 +76,7 @@ g++ -std=c++17 main.cpp serial.cpp -o avrisp
 avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 ```
 
-### AVRPARA モード（高電圧パラレル）
+### AVRHVPP モード（高電圧パラレル）
 
 ```sh
 ./avrisp -p /dev/ttyACM0 --debug               # シグネチャ、ヒューズ、ロックビットをまとめて読み出し
@@ -126,16 +126,16 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 | 送信 | 応答 | 動作 |
 |---|---|---|
-| `.AVRPARA.` | `AVRPARA\r\n` | AVRPARA モードに切り替え |
+| `.AVRHVPP.` | `AVRHVPP\r\n` | AVRHVPP モードに切り替え |
 | `.BITBANG.` | `BITBANG\r\n` | BITBANG モード（ISP ピンの直接操作）に切り替え |
 | 0x40 未満のバイト | — | どのモードからでも STK500 モードに戻る |
 
 0x40 未満のバイトで自動的に戻るのは、avrdude などの STK500 クライアントを、モードを意識せずにそのまま使えるようにするためです（STK500 のコマンドは `'0'` = 0x30 などから始まります）。
-その代わり、AVRPARA モードで使えるコマンドやデータは 0x40 以上に限られます。任意の値は複数の0x40以上のバイトへ符号化して送る設計です。
+その代わり、AVRHVPP モードで使えるコマンドやデータは 0x40 以上に限られます。任意の値は複数の0x40以上のバイトへ符号化して送る設計です。
 
 ホストツールは切り替えの前に `'0'` と `' '` を送り、`0x14 0x10`（STK_INSYNC、STK_OK）が返ることを確認して同期を取ります。
 
-### AVRPARA モードのコマンド
+### AVRHVPP モードのコマンド
 
 コマンド値は `common/commands.h` でファームウェアとホストツールの間で共有しています。
 

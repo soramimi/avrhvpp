@@ -4,24 +4,24 @@
 
 ## 構成
 
-- `atmega32u2-firmware/` — ファームウェア（avr-gcc、C++11）
+- `firmware-atmega32u2/` — ファームウェア（avr-gcc、C++11）
   - `main.cpp`: USB の送受信バッファ、STK500v1 実装（`avrisp()`）、BITBANG モード、モード切り替え（`isp_poll()`）
-  - `avrpara.cpp` / `avrpara.h`: 高電圧パラレルプログラミング（`AVRPARA` クラス）と AVRPARA モードのコマンド処理（`AVRPARA::process()`）
+  - `avrhvpp.cpp` / `avrhvpp.h`: 高電圧パラレルプログラミング（`AVRHVPP` クラス）と AVRHVPP モードのコマンド処理（`AVRHVPP::process()`）
   - `avrgpio.h`: ピン操作のテンプレート `avr::GPIO<PORT, PIN>`
   - `usb.c` / `usb.h`: USB CDC
   - `waitloop.cpp` / `waitloop.h`: nop ループによる待機
 - `app/` — ホストツール（C++17。`main.cpp` と `serial.cpp`。Qt には依存しない）
-- `common/commands.h` — ファームウェアとホストツールで共有する AVRPARA モードのコマンド値
-- `pcb/` — KiCad データ。ピンの接続を確かめるときは `pcb/avrpara.kicad_pcb` のパッドとネットの対応を見るのが確実です。
+- `common/commands.h` — ファームウェアとホストツールで共有する AVRHVPP モードのコマンド値
+- `pcb/` — KiCad データ。ピンの接続を確かめるときは `pcb/avrhvpp.kicad_pcb` のパッドとネットの対応を見るのが確実です。
 
 ## ビルドと確認
 
 ```sh
-cd atmega32u2-firmware && make clean; make     # ファームウェア
+cd firmware-atmega32u2 && make clean; make     # ファームウェア
 cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト（ビルド確認用）
 ```
 
-- `Makefile` にヘッダの依存関係がありません。ヘッダ（特に `avrpara.h` のクラス定義）を変えたら必ず `make clean` してください。古い `main.o` が残ると、クラスの配置がずれたまま壊れたバイナリができます。
+- `Makefile` にヘッダの依存関係がありません。ヘッダ（特に `avrhvpp.h` のクラス定義）を変えたら必ず `make clean` してください。古い `main.o` が残ると、クラスの配置がずれたまま壊れたバイナリができます。
 - 自動テストはありません。動作確認には実機（プログラマ本体とターゲットチップ）が必要です。エージェントはビルドが通るところまで確認し、実機での確認はユーザーに依頼してください。
 - `make write`、`avrdude`、ホストツールの実行など、実機に書き込む操作はユーザーの指示なしに行わないでください。
 
@@ -34,8 +34,8 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト�
 
 ### モード切り替え（現状維持）
 - 0x40 未満のバイトを受けると、どのモードからでも STK500 モードに戻ります（`isp_poll()`）。avrdude などをそのまま使えるようにするための意図的な仕様です。
-- そのため、AVRPARA モードのコマンドと引数は 0x40 以上に限られます。この制約を外す変更は、ユーザーと仕様を相談してから行ってください。
-- AVRPARA のコマンド値を追加・変更するときは `common/commands.h` を変更し、ファームウェアとホストツールで同じ定義を使用してください。
+- そのため、AVRHVPP モードのコマンドと引数は 0x40 以上に限られます。この制約を外す変更は、ユーザーと仕様を相談してから行ってください。
+- AVRHVPP のコマンド値を追加・変更するときは `common/commands.h` を変更し、ファームウェアとホストツールで同じ定義を使用してください。
 - 任意の8ビット値は、`CMD_LOAD_7BITS` で下位7ビットをロードし、`CMD_ADDR0` / `CMD_ADDR1` や `CMD_DATA0` / `CMD_DATA1` で最上位ビットを表します。
 
 ### 高電圧パラレルプログラミング
@@ -59,7 +59,7 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト�
 - チップ消去は `CMD_CHIP_ERASE`、ロックビット読み書きは `CMD_READ_LOCK` / `CMD_WRITE_LOCK` で処理します。旧プロトコルの0xE0と0xEEは使用しません。
 
 ### 待機関数
-- `avrpara.cpp` の `usleep` と `msleep` は `waitloop.h` 版です。`usleep` はマクロで、どちらも USB をポーリングしません。
+- `avrhvpp.cpp` の `usleep` と `msleep` は `waitloop.h` 版です。`usleep` はマクロで、どちらも USB をポーリングしません。
 - `main.cpp` には USB をポーリングする `msleep(int)` と `usleep(int)` の関数があります。`main.cpp` から `waitloop.h` をインクルードすると、`usleep` のマクロが関数定義を置き換えてしまうので注意してください。
 
 ### ホストツール

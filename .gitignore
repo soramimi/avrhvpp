@@ -1,2 +1,4 @@
 build/
 pcb/avrpara-backups/
+_bin/
+*.d

@@ -1,9 +1,9 @@
-#include "avrpara.h"
+#include "avrhvpp.h"
 #include "waitloop.h"
 
 #include "../common/commands.h"
 
-AVRPARA::AVRPARA()
+AVRHVPP::AVRHVPP()
 {
 	pin_reset12v_.write(0);
 	pin_rdybsy_.read();
@@ -19,12 +19,12 @@ AVRPARA::AVRPARA()
 	msleep(5);
 }
 
-AVRPARA::~AVRPARA()
+AVRHVPP::~AVRHVPP()
 {
 	set_programming_mode(false);
 }
 
-bool AVRPARA::set_programming_mode(bool f)
+bool AVRHVPP::set_programming_mode(bool f)
 {
 	if (f) {
 		write_oe(1);
@@ -69,7 +69,7 @@ bool AVRPARA::set_programming_mode(bool f)
 	}
 }
 
-void AVRPARA::write_data_pins(bool iscommand, uint8_t value)
+void AVRHVPP::write_data_pins(bool iscommand, uint8_t value)
 {
 	write_data_pins(value);
 	set_data_pin_mode(PinMode::Output);
@@ -79,12 +79,12 @@ void AVRPARA::write_data_pins(bool iscommand, uint8_t value)
 	set_data_pin_mode(PinMode::Input);
 }
 
-bool AVRPARA::read_rdybsy()
+bool AVRHVPP::read_rdybsy()
 {
 	return pin_rdybsy_.read();
 }
 
-bool AVRPARA::wait_ready()
+bool AVRHVPP::wait_ready()
 {
 	for (int i = 0; i < 1000; i++) {
 		if (pin_rdybsy_.read()) {
@@ -95,67 +95,67 @@ bool AVRPARA::wait_ready()
 	return false;
 }
 
-void AVRPARA::write_oe(bool b)
+void AVRHVPP::write_oe(bool b)
 {
 	pin_oe_.write(b);
 }
 
-void AVRPARA::write_wr(bool b)
+void AVRHVPP::write_wr(bool b)
 {
 	pin_wr_.write(b);
 }
 
-void AVRPARA::write_bs1(bool b)
+void AVRHVPP::write_bs1(bool b)
 {
 	pin_bs1_.write(b);
 }
 
-void AVRPARA::write_bs2(bool b)
+void AVRHVPP::write_bs2(bool b)
 {
 	pin_bs2_.write(b);
 }
 
-void AVRPARA::write_xa0(bool b)
+void AVRHVPP::write_xa0(bool b)
 {
 	pin_xa0_.write(b);
 }
 
-void AVRPARA::write_xa1(bool b)
+void AVRHVPP::write_xa1(bool b)
 {
 	pin_xa1_.write(b);
 }
 
-void AVRPARA::write_pagel(bool b)
+void AVRHVPP::write_pagel(bool b)
 {
 	pin_pagel_.write(b);
 }
 
-void AVRPARA::write_xtal1(bool b)
+void AVRHVPP::write_xtal1(bool b)
 {
 	pin_xtal1_.write(b);
 }
 
-void AVRPARA::write_reset12v(bool b)
+void AVRHVPP::write_reset12v(bool b)
 {
 	pin_reset12v_.write(b);
 }
 
-void AVRPARA::set_data_pin_mode(PinMode mode)
+void AVRHVPP::set_data_pin_mode(PinMode mode)
 {
 	DDRD = (mode == PinMode::Output) ? 0xff : 0x00;
 }
 
-uint8_t AVRPARA::read_data_pins()
+uint8_t AVRHVPP::read_data_pins()
 {
 	return PIND;
 }
 
-void AVRPARA::write_data_pins(uint8_t c)
+void AVRHVPP::write_data_pins(uint8_t c)
 {
 	PORTD = c;
 }
 
-void AVRPARA::pulse_xtal1()
+void AVRHVPP::pulse_xtal1()
 {
 	usleep(1);
 	write_xtal1(1);
@@ -164,7 +164,7 @@ void AVRPARA::pulse_xtal1()
 	usleep(1);
 }
 
-void AVRPARA::pulse_wr()
+void AVRHVPP::pulse_wr()
 {
 	usleep(10);
 	write_wr(0);
@@ -173,17 +173,17 @@ void AVRPARA::pulse_wr()
 	usleep(10);
 }
 
-void AVRPARA::set_command(uint8_t c)
+void AVRHVPP::set_command(uint8_t c)
 {
 	write_data_pins(true, c);
 }
 
-void AVRPARA::set_low_address(uint8_t c)
+void AVRHVPP::set_low_address(uint8_t c)
 {
 	write_data_pins(false, c);
 }
 
-uint8_t AVRPARA::read_data()
+uint8_t AVRHVPP::read_data()
 {
 	set_data_pin_mode(PinMode::Input);
 	write_oe(0);
@@ -194,7 +194,7 @@ uint8_t AVRPARA::read_data()
 	return c;
 }
 
-uint8_t AVRPARA::read_signature(int addr)
+uint8_t AVRHVPP::read_signature(int addr)
 {
 	write_bs1(0);
 	write_bs2(0);
@@ -204,7 +204,7 @@ uint8_t AVRPARA::read_signature(int addr)
 	return read_data();
 }
 
-void AVRPARA::load_data_low(uint8_t c)
+void AVRHVPP::load_data_low(uint8_t c)
 {
 	write_xa1(0);
 	write_xa0(1);
@@ -216,7 +216,7 @@ void AVRPARA::load_data_low(uint8_t c)
 	write_xa0(0);
 }
 
-uint8_t AVRPARA::read_fuse(Fuse fuse)
+uint8_t AVRHVPP::read_fuse(Fuse fuse)
 {
 	bool bs1 = 0;
 	bool bs2 = 0;
@@ -244,7 +244,7 @@ uint8_t AVRPARA::read_fuse(Fuse fuse)
 	return read_data();
 }
 
-bool AVRPARA::write_lock(uint8_t value)
+bool AVRHVPP::write_lock(uint8_t value)
 {
 	write_bs1(0);
 	write_bs2(0);
@@ -259,7 +259,7 @@ bool AVRPARA::write_lock(uint8_t value)
 
 // low: (0,0), high: (1,0), extended: (0,1)
 // note: BS1/BS2 assignment differs from read_fuse()
-bool AVRPARA::write_fuse(Fuse fuse, uint8_t value)
+bool AVRHVPP::write_fuse(Fuse fuse, uint8_t value)
 {
 	bool bs1 = 0;
 	bool bs2 = 0;
@@ -290,7 +290,7 @@ bool AVRPARA::write_fuse(Fuse fuse, uint8_t value)
 	return ok;
 }
 
-bool AVRPARA::chip_erase()
+bool AVRHVPP::chip_erase()
 {
 	write_xa0(0);
 	write_xa1(1);
@@ -307,7 +307,7 @@ uint8_t write_value = 0;
 bool addr_valid = false;
 bool data_valid = false;
 
-void AVRPARA::reset_command_state()
+void AVRHVPP::reset_command_state()
 {
 	addr_valid = false;
 	data_valid = false;
@@ -320,7 +320,7 @@ void write_hex(char *p, uint8_t c)
 	p[1] = hex[c & 15];
 }
 
-void AVRPARA::process(uint8_t c)
+void AVRHVPP::process(uint8_t c)
 {
 	auto SendACK = [this]() {
 		write_string("1\r\n");

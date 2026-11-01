@@ -124,7 +124,7 @@ public:
 	enum Mode {
 		STK500,
 		BITBANG,
-		AVRPARA,
+		AVRHVPP,
 	};
 	Mode mode_ = STK500;
 	Mode mode() const
@@ -152,19 +152,19 @@ public:
 		return false;
 	}
 
-	bool enter_avrpara_mode()
+	bool enter_avrhvpp_mode()
 	{
-		if (mode() == AVRPARA) return true;
+		if (mode() == AVRHVPP) return true;
 
-		static constexpr std::string_view command = ".AVRPARA.";
-		static constexpr std::string_view expect = "AVRPARA";
+		static constexpr std::string_view command = ".AVRHVPP.";
+		static constexpr std::string_view expect = "AVRHVPP";
 
 		if (sync()) {
 			serial_.write(command.data(), (int)command.size());
 
 			std::vector<char> line;
 			if (read_line(&line, MODE_ENTER_TIMEOUT_MS) && line == expect) {
-				mode_ = AVRPARA;
+				mode_ = AVRHVPP;
 				return true;
 			}
 		}
@@ -338,8 +338,8 @@ bool avr_chip_erase(Connection *conn)
 
 bool perform(Operation const &op, Connection *conn)
 {
-	if (!conn->enter_avrpara_mode()) {
-		fprintf(stderr, "failed to enter avrpara mode\n");
+	if (!conn->enter_avrhvpp_mode()) {
+		fprintf(stderr, "failed to enter avrhvpp mode\n");
 		return false;
 	}
 
