@@ -2025,6 +2025,207 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Device:LED"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "D"
+				(at 0 2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "LED"
+				(at 0 -2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Description" "Light emitting diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Sim.Pins" "1=K 2=A"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "LED diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_fp_filters" "LED* LED_SMD:* LED_THT:*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(symbol "LED_0_1"
+				(polyline
+					(pts
+						(xy -3.048 -0.762) (xy -4.572 -2.286) (xy -3.81 -2.286) (xy -4.572 -2.286) (xy -4.572 -1.524)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.778 -0.762) (xy -3.302 -2.286) (xy -2.54 -2.286) (xy -3.302 -2.286) (xy -3.302 -1.524)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.27 0) (xy 1.27 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.27 -1.27) (xy -1.27 1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -1.27) (xy 1.27 1.27) (xy -1.27 0) (xy 1.27 -1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "LED_1_1"
+				(pin passive line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "K"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Device:R"
 			(pin_numbers
 				(hide yes)
@@ -2982,7 +3183,7 @@
 			)
 			(embedded_fonts no)
 		)
-		(symbol "Oscillator:CXO_DIP8"
+		(symbol "Oscillator:CXO_DIP14"
 			(pin_names
 				(offset 0.254)
 			)
@@ -3002,7 +3203,7 @@
 					(justify left)
 				)
 			)
-			(property "Value" "CXO_DIP8"
+			(property "Value" "CXO_DIP14"
 				(at 1.27 -6.35 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3013,7 +3214,7 @@
 					(justify left)
 				)
 			)
-			(property "Footprint" "Oscillator:Oscillator_DIP-8"
+			(property "Footprint" "Oscillator:Oscillator_DIP-14"
 				(at 11.43 -8.89 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3035,7 +3236,7 @@
 					)
 				)
 			)
-			(property "Description" "Crystal Clock Oscillator, DIP8-style metal package"
+			(property "Description" "Crystal Clock Oscillator, DIP14-style metal package"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3057,7 +3258,7 @@
 					)
 				)
 			)
-			(property "ki_fp_filters" "Oscillator*DIP*8*"
+			(property "ki_fp_filters" "Oscillator*DIP*14*"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -3068,7 +3269,7 @@
 					)
 				)
 			)
-			(symbol "CXO_DIP8_0_1"
+			(symbol "CXO_DIP14_0_1"
 				(rectangle
 					(start -5.08 5.08)
 					(end 5.08 -5.08)
@@ -3094,7 +3295,7 @@
 					)
 				)
 			)
-			(symbol "CXO_DIP8_1_1"
+			(symbol "CXO_DIP14_1_1"
 				(pin input line
 					(at -7.62 0 0)
 					(length 2.54)
@@ -3123,7 +3324,7 @@
 							)
 						)
 					)
-					(number "4"
+					(number "7"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3141,7 +3342,7 @@
 							)
 						)
 					)
-					(number "5"
+					(number "8"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3159,7 +3360,7 @@
 							)
 						)
 					)
-					(number "8"
+					(number "14"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -4266,12 +4467,6 @@
 		(uuid "47473736-14f7-4064-88db-7d9471da57b1")
 	)
 	(junction
-		(at 142.24 93.98)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "47969012-01b7-48e0-99e2-f0d0b2809dc0")
-	)
-	(junction
 		(at 82.55 172.72)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -4605,6 +4800,16 @@
 	)
 	(wire
 		(pts
+			(xy 176.53 96.52) (xy 176.53 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3fa4e83c-9e44-4ab7-9538-b9be9b3e3010")
+	)
+	(wire
+		(pts
 			(xy 156.21 127) (xy 179.07 127)
 		)
 		(stroke
@@ -4612,16 +4817,6 @@
 			(type default)
 		)
 		(uuid "4237b474-0918-4b82-923b-16a521eb3198")
-	)
-	(wire
-		(pts
-			(xy 142.24 93.98) (xy 166.37 93.98)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "43bd65ee-2fa3-482f-8fa1-a16d478eeba4")
 	)
 	(wire
 		(pts
@@ -4905,16 +5100,6 @@
 	)
 	(wire
 		(pts
-			(xy 142.24 93.98) (xy 142.24 96.52)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "79ae3275-28da-4126-aadc-6cbdc827d1b8")
-	)
-	(wire
-		(pts
 			(xy 171.45 83.82) (xy 171.45 99.06)
 		)
 		(stroke
@@ -4962,6 +5147,16 @@
 			(type default)
 		)
 		(uuid "7f186d50-6dc0-45c9-9d85-988c2075aae9")
+	)
+	(wire
+		(pts
+			(xy 199.39 157.48) (xy 199.39 160.02)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "84861ad0-b7a2-431e-84c8-149e2b3f066c")
 	)
 	(wire
 		(pts
@@ -5025,6 +5220,16 @@
 	)
 	(wire
 		(pts
+			(xy 176.53 157.48) (xy 181.61 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "85d7116b-99cb-490e-a1d6-2567ea616eee")
+	)
+	(wire
+		(pts
 			(xy 143.51 127) (xy 143.51 144.78)
 		)
 		(stroke
@@ -5085,7 +5290,7 @@
 	)
 	(wire
 		(pts
-			(xy 132.08 93.98) (xy 142.24 93.98)
+			(xy 132.08 93.98) (xy 166.37 93.98)
 		)
 		(stroke
 			(width 0)
@@ -5165,6 +5370,16 @@
 	)
 	(wire
 		(pts
+			(xy 196.85 157.48) (xy 199.39 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9a622da1-06a2-4b3b-ae35-fedd6c903241")
+	)
+	(wire
+		(pts
 			(xy 132.08 119.38) (xy 151.13 119.38)
 		)
 		(stroke
@@ -5172,6 +5387,16 @@
 			(type default)
 		)
 		(uuid "9fb6ae6f-2596-4e9c-84e1-2fc9256423e8")
+	)
+	(wire
+		(pts
+			(xy 179.07 96.52) (xy 176.53 96.52)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a073d803-8724-46da-a60f-5e636b10b5ac")
 	)
 	(wire
 		(pts
@@ -7962,6 +8187,92 @@
 		)
 	)
 	(symbol
+		(lib_id "Oscillator:CXO_DIP14")
+		(at 146.05 35.56 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "085d6f09-bda8-4e66-a92f-4d1fc9b352b7")
+		(property "Reference" "Y3"
+			(at 157.48 29.1398 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "CXO_DIP14"
+			(at 157.48 31.6798 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Oscillator:Oscillator_DIP-14"
+			(at 157.48 44.45 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" "http://cdn-reichelt.de/documents/datenblatt/B400/OSZI.pdf"
+			(at 143.51 35.56 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Crystal Clock Oscillator, DIP14-style metal package"
+			(at 146.05 35.56 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "14"
+			(uuid "a7c16662-fe51-43c1-84e6-c54d485cd3b2")
+		)
+		(pin "1"
+			(uuid "7eee25cf-a6df-4442-a074-4ca1524c974a")
+		)
+		(pin "7"
+			(uuid "8cec52a3-555d-49a0-a4da-893f1f78cab3")
+		)
+		(pin "8"
+			(uuid "9162e1eb-cb84-4d95-8696-53d69f8439d1")
+		)
+		(instances
+			(project "avrpara"
+				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
+					(reference "Y3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "Device:R")
 		(at 166.37 58.42 270)
 		(unit 1)
@@ -8354,6 +8665,82 @@
 		)
 	)
 	(symbol
+		(lib_id "power:VCC")
+		(at 146.05 27.94 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "343b7488-fdbf-4f64-a775-accecea63aa7")
+		(property "Reference" "#PWR019"
+			(at 146.05 31.75 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "VCC"
+			(at 146.431 23.5458 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 146.05 27.94 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 146.05 27.94 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 146.05 27.94 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "323e64d5-b86f-4b96-ac45-5fe4065e4d06")
+		)
+		(instances
+			(project "avrpara"
+				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
+					(reference "#PWR019")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "Device:R")
 		(at 191.77 53.34 90)
 		(unit 1)
@@ -8510,8 +8897,8 @@
 		)
 	)
 	(symbol
-		(lib_id "power:+12V")
-		(at 146.05 27.94 0)
+		(lib_id "Device:LED")
+		(at 193.04 157.48 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -8520,10 +8907,9 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "3c5354df-cd85-42bf-a887-4a3ee00a8b92")
-		(property "Reference" "#PWR0115"
-			(at 146.05 31.75 0)
-			(hide yes)
+		(uuid "46206c16-3cec-4320-89ce-d9be5768ddff")
+		(property "Reference" "D1"
+			(at 194.6275 149.86 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8532,8 +8918,8 @@
 				)
 			)
 		)
-		(property "Value" "+12V"
-			(at 146.05 24.3642 0)
+		(property "Value" "LED"
+			(at 194.6275 152.4 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8542,8 +8928,8 @@
 				)
 			)
 		)
-		(property "Footprint" ""
-			(at 146.05 27.94 0)
+		(property "Footprint" "LED_THT:LED_D3.0mm"
+			(at 193.04 157.48 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8554,7 +8940,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 146.05 27.94 0)
+			(at 193.04 157.48 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8564,8 +8950,20 @@
 				)
 			)
 		)
-		(property "Description" ""
-			(at 146.05 27.94 0)
+		(property "Description" "Light emitting diode"
+			(at 193.04 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=K 2=A"
+			(at 193.04 157.48 0)
+			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8575,12 +8973,15 @@
 			)
 		)
 		(pin "1"
-			(uuid "234a30dd-7550-48ef-b30e-44559bb6ccb7")
+			(uuid "d72d1280-2d5e-456f-96a2-89b03a55b18a")
+		)
+		(pin "2"
+			(uuid "c15aaa44-7dc5-4768-a2bd-3f76fb5d50f0")
 		)
 		(instances
 			(project "avrpara"
 				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
-					(reference "#PWR0115")
+					(reference "D1")
 					(unit 1)
 				)
 			)
@@ -8672,6 +9073,162 @@
 	)
 	(symbol
 		(lib_id "power:GND")
+		(at 199.39 160.02 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "4b88c96c-4ce7-400e-a889-cc5dfa9f96aa")
+		(property "Reference" "#PWR0115"
+			(at 199.39 166.37 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 199.517 164.4142 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 199.39 160.02 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 199.39 160.02 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 199.39 160.02 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "3d5510ca-f5a8-4ab2-9c32-0c09793a00e2")
+		)
+		(instances
+			(project "avrpara"
+				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
+					(reference "#PWR0115")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 185.42 157.48 90)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "5309920d-40cc-4861-ab12-3b819ee6cc80")
+		(property "Reference" "R10"
+			(at 184.2516 155.702 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "4.7k"
+			(at 186.563 155.702 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal"
+			(at 185.42 159.258 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 185.42 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" ""
+			(at 185.42 157.48 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "d6ad0f7a-5315-4868-ada5-fe1d05035085")
+		)
+		(pin "2"
+			(uuid "b5d7a8b0-69e2-4c38-8478-bfb1a5399c0b")
+		)
+		(instances
+			(project "avrpara"
+				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
+					(reference "R10")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
 		(at 205.74 83.82 0)
 		(unit 1)
 		(body_style 1)
@@ -8741,92 +9298,6 @@
 			(project "avrpara"
 				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
 					(reference "#PWR0105")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Oscillator:CXO_DIP8")
-		(at 146.05 35.56 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom yes)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "64779583-d0b5-454d-872e-e6ad0460ab6b")
-		(property "Reference" "Y2"
-			(at 157.48 29.1398 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Value" "CXO_DIP8"
-			(at 157.48 31.6798 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Footprint" "Oscillator:Oscillator_DIP-8"
-			(at 157.48 44.45 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" "http://cdn-reichelt.de/documents/datenblatt/B400/OSZI.pdf"
-			(at 143.51 35.56 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Crystal Clock Oscillator, DIP8-style metal package"
-			(at 146.05 35.56 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(pin "8"
-			(uuid "79b9732e-9875-4a89-9381-67412ea4246f")
-		)
-		(pin "5"
-			(uuid "c3f21810-de72-4e8f-9732-7ca5895ecbb3")
-		)
-		(pin "1"
-			(uuid "2fe31af8-d62e-4775-8d8b-bfb931eb3f4f")
-		)
-		(pin "4"
-			(uuid "e42542a3-d305-4b40-b2dd-e7f09c61c5a9")
-		)
-		(instances
-			(project "avrpara"
-				(path "/efeac2a2-7682-4dc7-83ee-f6f1b23da506"
-					(reference "Y2")
 					(unit 1)
 				)
 			)
@@ -10485,7 +10956,7 @@
 	)
 	(symbol
 		(lib_id "Connector:Conn_01x01_Pin")
-		(at 147.32 96.52 180)
+		(at 158.75 35.56 180)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10496,7 +10967,7 @@
 		(fields_autoplaced yes)
 		(uuid "f557d7a8-eea3-4f8b-9ce4-fddf60785987")
 		(property "Reference" "J5"
-			(at 146.685 91.44 0)
+			(at 158.115 30.48 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10506,7 +10977,7 @@
 			)
 		)
 		(property "Value" "Conn_01x01_Pin"
-			(at 146.685 93.98 0)
+			(at 158.115 33.02 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10516,7 +10987,7 @@
 			)
 		)
 		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical"
-			(at 147.32 96.52 0)
+			(at 158.75 35.56 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10527,7 +10998,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 147.32 96.52 0)
+			(at 158.75 35.56 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10538,7 +11009,7 @@
 			)
 		)
 		(property "Description" "Generic connector, single row, 01x01, script generated"
-			(at 147.32 96.52 0)
+			(at 158.75 35.56 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
