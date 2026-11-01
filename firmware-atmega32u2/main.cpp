@@ -1,5 +1,5 @@
 // USB-CDC ATMEGA32U2
-// Copyright (C) 2022 S.Fuchita (@soramimi_jp)
+// Copyright (C) 2026 S.Fuchita (@soramimi_jp)
 
 #include "usb.h"
 #include <avr/interrupt.h>
@@ -33,7 +33,7 @@ void usb_poll_tx()
 		int n = data_tx_buffer_n;
 		n = n < sizeof(tmp) ? n : sizeof(tmp);
 		if (n == 0) break;
-		for (uint8_t i = 0; i < data_tx_buffer_n; i++) {
+		for (uint8_t i = 0; i < n; i++) {
 			tmp[i] = data_tx_buffer[data_tx_buffer_i];
 			data_tx_buffer_i = (data_tx_buffer_i + 1) % sizeof(data_tx_buffer);
 		}
@@ -811,8 +811,18 @@ void bitbang(uint8_t c)
 
 /////
 
+static char const *state_avrhvpp = nullptr;
+static char const *state_bitbang = nullptr;
+
+static avr::GPIO<avr::B, 7> pin_xtal1_;
+static bool xtal1_output_enabled = false;
+static bool xtal1_level = false;
+
 void reset_ports()
 {
+	xtal1_output_enabled = false;
+	pin_xtal1_.read();
+	
 	spi.end();
 	icsp_rst.read();
 	icsp_sck.read();
@@ -820,10 +830,26 @@ void reset_ports()
 	icsp_miso.read();
 }
 
+void reset_for_avrisp()
+{
+	reset_ports();
+	state_avrhvpp = nullptr;
+	state_bitbang = nullptr;
+	ispmode = ISPMODE::AVRISP;
+	xtal1_output_enabled = true;
+}
+
 void isp_poll()
 {
-	static char const *state_avrhvpp = nullptr;
-	static char const *state_bitbang = nullptr;
+	if (xtal1_output_enabled) {
+		xtal1_level = !xtal1_level;
+		if (xtal1_level) {
+			pin_xtal1_.write(1);
+		} else {
+			pin_xtal1_.write(0);
+		}
+	}
+	
 	if (usb_read_available() > 0) {
 		uint8_t c = getch();
 		if (c < 0x40) {
@@ -831,10 +857,7 @@ void isp_poll()
 				if (ispmode == ISPMODE::AVRHVPP) {
 					avrhvpp.reset_command_state();
 				}
-				ispmode = ISPMODE::AVRISP;
-				state_avrhvpp = nullptr;
-				state_bitbang = nullptr;
-				reset_ports();
+				reset_for_avrisp();
 			}
 		}
 		if (ispmode == ISPMODE::AVRISP) {
@@ -914,7 +937,7 @@ void setup()
 		_delay_ms(100);
 	}
 
-	reset_ports();
+	reset_for_avrisp();
 }
 
 void loop()

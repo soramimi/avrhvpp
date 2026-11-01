@@ -51,8 +51,8 @@ clean:
 
 #
 
-write: main.hex
-	avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p $(MCU) -U hfuse:w:0xd9:m -U lfuse:w:0x5e:m -U flash:w:main.hex
+write: $(NAME).hex
+	avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p $(MCU) -U hfuse:w:0xd9:m -U lfuse:w:0x5e:m -U flash:w:$(NAME).hex
 
 fetch:
 	-avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p $(MCU)
