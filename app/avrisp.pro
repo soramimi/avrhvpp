@@ -10,3 +10,7 @@ SOURCES += \
 HEADERS += \
 	../common/commands.h \
 	serial.h
+
+DISTFILES += \
+    ../AGENTS.md \
+    ../README.md

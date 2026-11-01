@@ -763,7 +763,7 @@ void digitalWrite(uint8_t pin, bool val)
 void bitbang(uint8_t c)
 {
 	uint8_t out = '\n';
-	
+
 	uint8_t pin = 0xff;
 	switch (c & 0x0f) {
 	case 0: pin = PIN_RESET; break;
@@ -771,7 +771,7 @@ void bitbang(uint8_t c)
 	case 2: pin = PIN_MOSI;  break;
 	case 3: pin = PIN_MISO;  break;
 	}
-	
+
 	if ((c & 0xf0) == 0x80) { // set input
 		pinMode(pin, INPUT);
 		digitalWrite(pin, LOW);
@@ -805,7 +805,7 @@ void bitbang(uint8_t c)
 	} else {
 		out = '?';
 	}
-	
+
 	usb_write_byte(out);
 }
 
@@ -828,6 +828,9 @@ void isp_poll()
 		uint8_t c = getch();
 		if (c < 0x40) {
 			if (ispmode != ISPMODE::AVRISP) {
+				if (ispmode == ISPMODE::AVRPARA) {
+					avrpara.reset_command_state();
+				}
 				ispmode = ISPMODE::AVRISP;
 				state_avrpara = nullptr;
 				state_bitbang = nullptr;
@@ -841,6 +844,7 @@ void isp_poll()
 					if (!*state_avrpara) {
 						state_avrpara = nullptr;
 						usb_write_string("AVRPARA\r\n");
+						avrpara.reset_command_state();
 						ispmode = ISPMODE::AVRPARA;
 						reset_ports();
 					}

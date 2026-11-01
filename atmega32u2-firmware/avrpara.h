@@ -48,23 +48,25 @@ public:
 	AVRPARA();
 	~AVRPARA();
 	void process(uint8_t c);
+	void reset_command_state();
 	void set_command(uint8_t c);
 	void set_low_address(uint8_t c);
 	bool wait_ready();
 	uint8_t read_data();
 	uint8_t read_signature(int addr);
 	void load_data_low(uint8_t c);
-	
+
 	enum class Fuse {
 		Low,
 		High,
 		Extended,
 		Lock,
 	};
-	
+
 	uint8_t read_fuse(Fuse fuse);
+	bool write_lock(uint8_t value);
 	bool write_fuse(Fuse fuse, uint8_t value);
-	
+
 	bool chip_erase();
 };
 
