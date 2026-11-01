@@ -1,6 +1,8 @@
 #include "avrpara.h"
 #include "waitloop.h"
 
+#include "../common/commands.h"
+
 AVRPARA::AVRPARA()
 {
 	pin_reset12v_.write(0);
@@ -202,17 +204,6 @@ uint8_t AVRPARA::read_signature(int addr)
 	return read_data();
 }
 
-uint8_t AVRPARA::read_fuse(bool bs1, bool bs2)
-{
-	set_command(0x04);
-	set_data_pin_mode(PinMode::Input);
-	write_bs1(bs1);
-	write_bs2(bs2);
-	write_oe(false);
-	usleep(1);
-	return read_data();
-}
-
 void AVRPARA::load_data_low(uint8_t c)
 {
 	write_xa1(0);
@@ -225,13 +216,60 @@ void AVRPARA::load_data_low(uint8_t c)
 	write_xa0(0);
 }
 
+uint8_t AVRPARA::read_fuse(Fuse fuse)
+{
+	bool bs1 = 0;
+	bool bs2 = 0;
+	if (fuse == Fuse::Low) {
+		bs1 = 0;
+		bs2 = 0;
+	} else if (fuse == Fuse::High) {
+		bs1 = 1;
+		bs2 = 1;
+	} else if (fuse == Fuse::Extended) {
+		bs1 = 0;
+		bs2 = 1;
+	} else if (fuse == Fuse::Lock) {
+		bs1 = 1;
+		bs2 = 0;
+	} else {
+		return 0;
+	}
+	set_command(0x04);
+	set_data_pin_mode(PinMode::Input);
+	write_bs1(bs1);
+	write_bs2(bs2);
+	write_oe(false);
+	usleep(1);
+	return read_data();
+}
+
 // low: (0,0), high: (1,0), extended: (0,1)
 // note: BS1/BS2 assignment differs from read_fuse()
-bool AVRPARA::write_fuse(bool bs1, bool bs2, uint8_t value)
+bool AVRPARA::write_fuse(Fuse fuse, uint8_t value)
 {
+	bool bs1 = 0;
+	bool bs2 = 0;
+	uint8_t cmd = 0x40;
+	if (fuse == Fuse::Low) {
+		bs1 = 0;
+		bs2 = 0;
+	} else if (fuse == Fuse::High) {
+		bs1 = 0;
+		bs2 = 1;
+	} else if (fuse == Fuse::Extended) {
+		bs1 = 1;
+		bs2 = 0;
+	} else if (fuse == Fuse::Lock) {
+		bs1 = 1;
+		bs2 = 1;
+		cmd = 0x20;
+	} else {
+		return false;
+	}
 	write_bs1(0);
 	write_bs2(0);
-	set_command(0x40);
+	set_command(cmd);
 	load_data_low(value);
 	write_bs1(bs1);
 	write_bs2(bs2);
@@ -253,47 +291,93 @@ bool AVRPARA::chip_erase()
 	return wait_ready();
 }
 
+uint8_t buffer[256];
+uint8_t addr = 0;
+uint8_t data = 0;
+
+void write_hex(char *p, uint8_t c)
+{
+	static char hex[] = "0123456789ABCDEF";
+	p[0] = hex[c >> 4];
+	p[1] = hex[c & 15];
+}
+
 void AVRPARA::process(uint8_t c)
 {
-	if (c == '@') {
-		char tmp[20];
-		auto WriteHex = [](char *p, uint8_t c){
-			static char hex[] = "0123456789ABCDEF";
-			p[0] = hex[c >> 4];
-			p[1] = hex[c & 15];
-		};
+	auto SendACK = [this]() {
+		write_string("1\r\n");
+	};
+	auto SendNACK = [this]() {
+		write_string("0\r\n");
+	};
+	
+	auto EnterProgrammingMode = [&]() {
 		if (!set_programming_mode(true)) {
 			set_programming_mode(false);
-			write_string("0\r\n");
-			return;
+			SendNACK();
+			return false;
 		}
-		WriteHex(tmp + 0, read_signature(0));
-		WriteHex(tmp + 2, read_signature(1));
-		WriteHex(tmp + 4, read_signature(2));
-		WriteHex(tmp + 6, read_fuse(0, 0));
-		WriteHex(tmp + 8, read_fuse(1, 1));
-		WriteHex(tmp + 10, read_fuse(0, 1));
-		WriteHex(tmp + 12, read_fuse(1, 0));
-		tmp[14] = '\r';
-		tmp[15] = '\n';
-		tmp[16] = 0;
-		set_programming_mode(false);
-		write_string(tmp);
-	} else if (c == 0xe0) { // restore ATmega328P factory default fuses
-		bool ok = set_programming_mode(true);
-		if (ok) {
-			ok = write_fuse(0, 0, 0x62) && ok; // low
-			ok = write_fuse(1, 0, 0xd9) && ok; // high
-			ok = write_fuse(0, 1, 0xff) && ok; // extended
+		return true;
+	};
+	
+	if (c == CMD_DEBUG) {
+		if (EnterProgrammingMode()) {
+			char tmp[20];
+			write_hex(tmp + 0, read_signature(0));
+			write_hex(tmp + 2, read_signature(1));
+			write_hex(tmp + 4, read_signature(2));
+			write_hex(tmp + 6, read_fuse(Fuse::Low));
+			write_hex(tmp + 8, read_fuse(Fuse::High));
+			write_hex(tmp + 10, read_fuse(Fuse::Extended));
+			write_hex(tmp + 12, read_fuse(Fuse::Lock));
+			tmp[14] = '\r';
+			tmp[15] = '\n';
+			tmp[16] = 0;
+			set_programming_mode(false);
+			write_string(tmp);
 		}
-		set_programming_mode(false);
-		write_string(ok ? "1\r\n" : "0\r\n");
-	} else if (c == 0xee) {
-		bool ok = set_programming_mode(true);
-		if (ok) {
-			ok = chip_erase();
+	} else if (c >= CMD_LOAD_7BITS) {
+		data = c & 0x7f;
+	} else if (c >= CMD_ADDR0) {
+		addr = data & 0x7f;
+	} else if (c >= CMD_ADDR1) {
+		addr = (data & 0x7f) | 0x80;
+	} else if (c >= CMD_DATA0) {
+		buffer[addr] = data & 0x7f;
+	} else if (c >= CMD_DATA1) {
+		buffer[addr] = (data & 0x7f) | 0x80;
+	} else if (c == CMD_READ_SIGNATURE) {
+		if (EnterProgrammingMode()) {
+			char tmp[20];
+			write_hex(tmp + 0, read_signature(0));
+			write_hex(tmp + 2, read_signature(1));
+			write_hex(tmp + 4, read_signature(2));
+			tmp[6] = '\r';
+			tmp[7] = '\n';
+			tmp[8] = 0;
+			set_programming_mode(false);
+			write_string(tmp);
 		}
-		set_programming_mode(false);
-		write_string(ok ? "1\r\n" : "0\r\n");
+	} else if (c == CMD_READ_FUSE) {
+		if (EnterProgrammingMode()) {
+			char tmp[20];
+			write_hex(tmp + 0, read_fuse((Fuse)data));
+			tmp[2] = '\r';
+			tmp[3] = '\n';
+			tmp[4] = 0;
+			set_programming_mode(false);
+			write_string(tmp);
+		}
+	} else if (c == CMD_WRITE_FUSE) {
+		if (EnterProgrammingMode()) {
+			
+			bool ok = false; // not implemented yet
+			
+			if (ok) {
+				SendACK();
+			} else {
+				SendNACK();
+			}
+		}
 	}
 }

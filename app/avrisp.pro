@@ -8,4 +8,5 @@ SOURCES += \
         serial.cpp
 
 HEADERS += \
+	../common/commands.h \
 	serial.h

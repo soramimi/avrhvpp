@@ -53,9 +53,18 @@ public:
 	bool wait_ready();
 	uint8_t read_data();
 	uint8_t read_signature(int addr);
-	uint8_t read_fuse(bool bs1, bool bs2);
 	void load_data_low(uint8_t c);
-	bool write_fuse(bool bs1, bool bs2, uint8_t value);
+	
+	enum class Fuse {
+		Low,
+		High,
+		Extended,
+		Lock,
+	};
+	
+	uint8_t read_fuse(Fuse fuse);
+	bool write_fuse(Fuse fuse, uint8_t value);
+	
 	bool chip_erase();
 };
 

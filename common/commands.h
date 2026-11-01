@@ -1,0 +1,16 @@
+#ifndef COMMANDS_H
+#define COMMANDS_H
+
+enum Command {
+	CMD_DEBUG = 0x40,
+	CMD_READ_SIGNATURE = 0x41,
+	CMD_READ_FUSE = 0x50,
+	CMD_WRITE_FUSE = 0x60,
+	CMD_ADDR0 = 0x70,
+	CMD_ADDR1 = 0x71,
+	CMD_DATA0 = 0x72,
+	CMD_DATA1 = 0x73,
+	CMD_LOAD_7BITS = 0x80,
+};
+
+#endif // COMMANDS_H
