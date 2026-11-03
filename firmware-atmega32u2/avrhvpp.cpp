@@ -1,7 +1,10 @@
 #include "avrhvpp.h"
 #include "waitloop.h"
+#include <string.h>
 
 #include "../common/commands.h"
+
+extern uint8_t flush_buffer[256];
 
 AVRHVPP::AVRHVPP()
 {
@@ -301,16 +304,18 @@ bool AVRHVPP::chip_erase()
 	return wait_ready();
 }
 
-uint8_t addr = 0;
-uint8_t data = 0;
-uint8_t write_value = 0;
-bool addr_valid = false;
-bool data_valid = false;
+uint8_t data_7bits_ = 0;
+uint8_t addr_ = 0;
+uint8_t page_ = 0;
 
-void AVRHVPP::reset_command_state()
+static inline uint8_t address()
 {
-	addr_valid = false;
-	data_valid = false;
+	return flush_buffer[0];
+}
+
+static inline uint8_t writedata()
+{
+	return flush_buffer[1];
 }
 
 void write_hex(char *p, uint8_t c)
@@ -339,6 +344,7 @@ void AVRHVPP::process(uint8_t c)
 	};
 
 	if (c == CMD_DEBUG) {
+#if 0
 		if (EnterProgrammingMode()) {
 			char tmp[20];
 			write_hex(tmp + 0, read_signature(0));
@@ -354,24 +360,37 @@ void AVRHVPP::process(uint8_t c)
 			set_programming_mode(false);
 			write_string(tmp);
 		}
+#endif
+	} else if (c == CMD_CLEAR) {
+		data_7bits_ = 0;
+		addr_ = 0;
+		if (1) {
+			memset(flush_buffer, 0, sizeof(flush_buffer));
+		} else { // debug
+			for (int i = 0; i < sizeof(flush_buffer); i++) {
+				flush_buffer[i] = i;
+			}
+		}
 	} else if (c == CMD_ADDR0) {
-		addr = data & 0x7f;
-		addr_valid = true;
-		data_valid = false;
+		addr_ = data_7bits_ & 0x7f;
 	} else if (c == CMD_ADDR1) {
-		addr = (data & 0x7f) | 0x80;
-		addr_valid = true;
-		data_valid = false;
+		addr_ = (data_7bits_ & 0x7f) | 0x80;
 	} else if (c == CMD_DATA0) {
-		if (addr_valid) {
-			write_value = data & 0x7f;
-			data_valid = true;
+		uint8_t data = data_7bits_ & 0x7f;
+		if (addr_ < sizeof(flush_buffer)) {
+			flush_buffer[addr_] = data;
+			addr_++;
 		}
 	} else if (c == CMD_DATA1) {
-		if (addr_valid) {
-			write_value = (data & 0x7f) | 0x80;
-			data_valid = true;
+		uint8_t data = (data_7bits_ & 0x7f) | 0x80;
+		if (addr_ < sizeof(flush_buffer)) {
+			flush_buffer[addr_] = data;
+			addr_++;
 		}
+	} else if (c == CMD_PAGE0) {
+		page_ = data_7bits_ & 0x7f;
+	} else if (c == CMD_PAGE1) {
+		page_ = (data_7bits_ & 0x7f) | 0x80;
 	} else if (c == CMD_READ_SIGNATURE) {
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -385,13 +404,7 @@ void AVRHVPP::process(uint8_t c)
 			write_string(tmp);
 		}
 	} else if (c == CMD_READ_FUSE) {
-		bool parameters_valid = addr_valid && addr <= (uint8_t)Fuse::Extended;
-		addr_valid = false;
-		data_valid = false;
-		if (!parameters_valid) {
-			SendNACK();
-			return;
-		}
+		uint8_t addr = address();
 		Fuse fuse = (Fuse)addr;
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -403,15 +416,10 @@ void AVRHVPP::process(uint8_t c)
 			write_string(tmp);
 		}
 	} else if (c == CMD_WRITE_FUSE) {
-		bool parameters_valid = addr_valid && data_valid && addr <= (uint8_t)Fuse::Extended;
-		addr_valid = false;
-		data_valid = false;
-		if (!parameters_valid) {
-			SendNACK();
-			return;
-		}
+		uint8_t addr = address();
+		uint8_t value = writedata();
 		if (EnterProgrammingMode()) {
-			bool ok = write_fuse((Fuse)addr, write_value);
+			bool ok = write_fuse((Fuse)addr, value);
 			set_programming_mode(false);
 			if (ok) {
 				SendACK();
@@ -430,15 +438,9 @@ void AVRHVPP::process(uint8_t c)
 			write_string(tmp);
 		}
 	} else if (c == CMD_WRITE_LOCK) {
-		bool parameters_valid = addr_valid && data_valid;
-		addr_valid = false;
-		data_valid = false;
-		if (!parameters_valid) {
-			SendNACK();
-			return;
-		}
+		uint8_t value = writedata();
 		if (EnterProgrammingMode()) {
-			bool ok = write_fuse(Fuse::Lock, write_value);
+			bool ok = write_fuse(Fuse::Lock, value);
 			set_programming_mode(false);
 			if (ok) {
 				SendACK();
@@ -447,7 +449,6 @@ void AVRHVPP::process(uint8_t c)
 			}
 		}
 	} else if (c == CMD_CHIP_ERASE) {
-		reset_command_state();
 		if (EnterProgrammingMode()) {
 			bool ok = chip_erase();
 			set_programming_mode(false);
@@ -457,7 +458,30 @@ void AVRHVPP::process(uint8_t c)
 				SendNACK();
 			}
 		}
+	} else if (c == CMD_READ_PAGE) {
+		uint8_t page  = page_;
+		uint8_t *data = flush_buffer;
+		// not implemented yet
+	} else if (c == CMD_WRITE_PAGE) {
+		uint8_t page  = page_;
+		uint8_t const *data = flush_buffer;
+		// not implemented yet
+	} else if (c == CMD_READ_16BYTES) {
+		char tmp[35];
+		for (uint8_t i = 0; i < 16; i++) {
+			if (addr_ < sizeof(flush_buffer)) {
+				write_hex(tmp + i * 2, flush_buffer[addr_]);
+				addr_++;
+			} else {
+				tmp[i * 2 + 0] = '-';
+				tmp[i * 2 + 1] = '-';
+			}
+		}
+		tmp[32] = '\r';
+		tmp[33] = '\n';
+		tmp[34] = 0;
+		write_string(tmp);
 	} else if (c >= CMD_LOAD_7BITS) {
-		data = c & 0x7f;
+		data_7bits_ = c & 0x7f;
 	}
 }

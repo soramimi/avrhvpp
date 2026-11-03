@@ -61,4 +61,12 @@ readfuse:
 	avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega32u2 -U hfuse:r:-:h -U lfuse:r:-:h
 
 
+#
 
+AVRHVPP := ../app/_bin/avrhvpp
+
+test:
+	$(AVRHVPP) -p /dev/ttyACM0 -wfl 62
+	$(AVRHVPP) -p /dev/ttyACM0 -rfl
+	$(AVRHVPP) -p /dev/ttyACM0 -wfl e2
+	$(AVRHVPP) -p /dev/ttyACM0 -rfl

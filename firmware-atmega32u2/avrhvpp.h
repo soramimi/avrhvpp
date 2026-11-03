@@ -48,7 +48,6 @@ public:
 	AVRHVPP();
 	~AVRHVPP();
 	void process(uint8_t c);
-	void reset_command_state();
 	void set_command(uint8_t c);
 	void set_low_address(uint8_t c);
 	bool wait_ready();

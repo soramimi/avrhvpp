@@ -7,6 +7,8 @@
 #include "avrgpio.h"
 #include "avrhvpp.h"
 
+void flip_xtal1();
+
 extern "C" uint8_t usb_read_available_();
 extern "C" uint8_t usb_read_byte_();
 
@@ -264,19 +266,19 @@ public:
 
 static SPI spi;
 
-enum class ISPMODE {
-	AVRISP,
+enum class Programmer {
+	ISP,
 	AVRHVPP,
 	BITBANG,
 };
 
-ISPMODE ispmode = ISPMODE::AVRISP;
+Programmer programmer_mode_ = Programmer::ISP;
 
 int error = 0;
 bool pmode = 0;
 // address for reading and writing, set by 'U' command
 unsigned int here;
-uint8_t buff[256]; // global block storage
+uint8_t flush_buffer[256]; // global block storage
 
 #define beget16(addr) (*addr * 256 + *(addr + 1))
 struct parameter_t {
@@ -313,7 +315,7 @@ uint8_t getch()
 void fill(int n)
 {
 	for (int x = 0; x < n; x++) {
-		buff[x] = getch();
+		flush_buffer[x] = getch();
 	}
 }
 
@@ -371,26 +373,26 @@ void get_version(uint8_t c)
 void set_parameters()
 {
 	// call this after reading parameter packet into buff[]
-	param.devicecode = buff[0];
-	param.revision = buff[1];
-	param.progtype = buff[2];
-	param.parmode = buff[3];
-	param.polling = buff[4];
-	param.selftimed = buff[5];
-	param.lockbytes = buff[6];
-	param.fusebytes = buff[7];
-	param.flashpoll = buff[8];
+	param.devicecode = flush_buffer[0];
+	param.revision = flush_buffer[1];
+	param.progtype = flush_buffer[2];
+	param.parmode = flush_buffer[3];
+	param.polling = flush_buffer[4];
+	param.selftimed = flush_buffer[5];
+	param.lockbytes = flush_buffer[6];
+	param.fusebytes = flush_buffer[7];
+	param.flashpoll = flush_buffer[8];
 	// ignore buff[9] (= buff[8])
 	// following are 16 bits (big endian)
-	param.eeprompoll = beget16(&buff[10]);
-	param.pagesize = beget16(&buff[12]);
-	param.eepromsize = beget16(&buff[14]);
+	param.eeprompoll = beget16(&flush_buffer[10]);
+	param.pagesize = beget16(&flush_buffer[12]);
+	param.eepromsize = beget16(&flush_buffer[14]);
 
 	// 32 bits flashsize (big endian)
-	param.flashsize = buff[16] * 0x01000000
-		+ buff[17] * 0x00010000
-		+ buff[18] * 0x00000100
-		+ buff[19];
+	param.flashsize = flush_buffer[16] * 0x01000000
+		+ flush_buffer[17] * 0x00010000
+		+ flush_buffer[18] * 0x00000100
+		+ flush_buffer[19];
 
 	// AVR devices have active low reset, AT89Sx are active high
 	rst_active_high = (param.devicecode >= 0xe0);
@@ -438,7 +440,7 @@ void universal()
 	uint8_t ch;
 
 	fill(4);
-	ch = spi_transaction(buff[0], buff[1], buff[2], buff[3]);
+	ch = spi_transaction(flush_buffer[0], flush_buffer[1], flush_buffer[2], flush_buffer[3]);
 	breply(ch);
 }
 
@@ -479,8 +481,8 @@ uint8_t write_flash_pages(int length)
 			commit(page);
 			page = current_page();
 		}
-		flash(0, here, buff[x++]);
-		flash(1, here, buff[x++]);
+		flash(0, here, flush_buffer[x++]);
+		flash(1, here, flush_buffer[x++]);
 		here++;
 	}
 
@@ -508,7 +510,7 @@ uint8_t write_eeprom_chunk(unsigned int start, unsigned int length)
 	fill(length);
 	for (unsigned int x = 0; x < length; x++) {
 		unsigned int addr = start + x;
-		spi_transaction(0xC0, (addr >> 8) & 0xFF, addr & 0xFF, buff[x]);
+		spi_transaction(0xC0, (addr >> 8) & 0xFF, addr & 0xFF, flush_buffer[x]);
 		msleep(45);
 	}
 	return STK_OK;
@@ -818,28 +820,7 @@ static avr::GPIO<avr::B, 7> pin_xtal1_;
 static bool xtal1_output_enabled = false;
 static bool xtal1_level = false;
 
-void reset_ports()
-{
-	xtal1_output_enabled = false;
-	pin_xtal1_.read();
-	
-	spi.end();
-	icsp_rst.read();
-	icsp_sck.read();
-	icsp_mosi.read();
-	icsp_miso.read();
-}
-
-void reset_for_avrisp()
-{
-	reset_ports();
-	state_avrhvpp = nullptr;
-	state_bitbang = nullptr;
-	ispmode = ISPMODE::AVRISP;
-	xtal1_output_enabled = true;
-}
-
-void isp_poll()
+void flip_xtal1()
 {
 	if (xtal1_output_enabled) {
 		xtal1_level = !xtal1_level;
@@ -849,27 +830,47 @@ void isp_poll()
 			pin_xtal1_.write(0);
 		}
 	}
+}
+
+void reset_mode(Programmer mode)
+{
+	xtal1_output_enabled = false;
+	pin_xtal1_.read();
 	
+	spi.end();
+	icsp_rst.read();
+	icsp_sck.read();
+	icsp_mosi.read();
+	icsp_miso.read();
+	
+	memset(flush_buffer, 0, sizeof(flush_buffer));
+	
+	state_avrhvpp = nullptr;
+	state_bitbang = nullptr;
+	programmer_mode_ = mode;
+	
+	if (programmer_mode_ == Programmer::ISP) {
+		xtal1_output_enabled = true;
+	}
+}
+
+void isp_poll()
+{
 	if (usb_read_available() > 0) {
 		uint8_t c = getch();
 		if (c < 0x40) {
-			if (ispmode != ISPMODE::AVRISP) {
-				if (ispmode == ISPMODE::AVRHVPP) {
-					avrhvpp.reset_command_state();
-				}
-				reset_for_avrisp();
+			if (programmer_mode_ != Programmer::ISP) {
+				reset_mode(Programmer::ISP);
 			}
 		}
-		if (ispmode == ISPMODE::AVRISP) {
+		if (programmer_mode_ == Programmer::ISP) {
 			if (state_avrhvpp) {
 				if (*state_avrhvpp == c) {
 					state_avrhvpp++;
 					if (!*state_avrhvpp) {
 						state_avrhvpp = nullptr;
 						usb_write_string("AVRHVPP\r\n");
-						avrhvpp.reset_command_state();
-						ispmode = ISPMODE::AVRHVPP;
-						reset_ports();
+						reset_mode(Programmer::AVRHVPP);
 					}
 					return;
 				} else {
@@ -882,8 +883,7 @@ void isp_poll()
 					if (!*state_bitbang) {
 						state_bitbang = nullptr;
 						usb_write_string("BITBANG\r\n");
-						ispmode = ISPMODE::BITBANG;
-						reset_ports();
+						reset_mode(Programmer::BITBANG);
 					}
 					return;
 				} else {
@@ -896,9 +896,9 @@ void isp_poll()
 				return;
 			}
 			avrisp(c);
-		} else if (ispmode == ISPMODE::AVRHVPP) {
+		} else if (programmer_mode_ == Programmer::AVRHVPP) {
 			avrhvpp.process(c);
-		} else if (ispmode == ISPMODE::BITBANG) {
+		} else if (programmer_mode_ == Programmer::BITBANG) {
 			bitbang(c);
 		}
 	}
@@ -937,7 +937,7 @@ void setup()
 		_delay_ms(100);
 	}
 
-	reset_for_avrisp();
+	reset_mode(Programmer::ISP);
 }
 
 void loop()

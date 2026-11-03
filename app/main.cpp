@@ -249,9 +249,8 @@ bool avr_read_status(Operation const &op, Connection *conn)
 	}
 
 	std::vector<char> line;
-	if (op.command == CMD_READ_FUSE) {
-		write_encoded_byte(conn, op.data, CMD_ADDR0, CMD_ADDR1);
-	}
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, op.data, CMD_DATA0, CMD_DATA1);
 	write_command(conn, op.command);
 	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
 		fprintf(stderr, "no response\n");
@@ -281,7 +280,8 @@ bool avr_read_status(Operation const &op, Connection *conn)
 
 bool avr_write_fuse(Operation const &op, Connection *conn)
 {
-	write_encoded_byte(conn, op.data, CMD_ADDR0, CMD_ADDR1);
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, op.data, CMD_DATA0, CMD_DATA1);
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
 	write_command(conn, CMD_WRITE_FUSE);
 
@@ -301,7 +301,7 @@ bool avr_write_fuse(Operation const &op, Connection *conn)
 
 bool avr_write_lock(Operation const &op, Connection *conn)
 {
-	write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
+	write_command(conn, CMD_CLEAR);
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
 	write_command(conn, CMD_WRITE_LOCK);
 
@@ -342,8 +342,38 @@ bool perform(Operation const &op, Connection *conn)
 		fprintf(stderr, "failed to enter avrhvpp mode\n");
 		return false;
 	}
-
-	if (op.command == CMD_WRITE_FUSE) {
+	
+	if (op.command == _CMD_DUMP_BUFFER) {
+		std::vector<char> line;
+		write_command(conn, CMD_CLEAR);
+		write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
+		for (int i = 0; i < 16; i++) {
+			write_command(conn, CMD_READ_16BYTES);
+			if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
+				fprintf(stderr, "no response\n");
+				return false;
+			}
+			for (int j = 0; j < 16; j++) {
+				char tmp[10];
+				tmp[0] = line[j * 2 + 0];
+				tmp[1] = line[j * 2 + 1];
+				tmp[2] = 0;
+				if (isxdigit((unsigned char)tmp[0]) && isxdigit((unsigned char)tmp[1])) {
+					tmp[0] = toupper((unsigned char)tmp[0]);
+					tmp[1] = toupper((unsigned char)tmp[1]);
+				} else {
+					tmp[0] = '-';
+					tmp[1] = '-';
+				}
+				if (j > 0) {
+					putchar(' ');
+				}
+				fwrite(tmp, 1, 2, stdout);
+			}
+			putchar('\n');
+		}
+		return true;
+	} else if (op.command == CMD_WRITE_FUSE) {
 		return avr_write_fuse(op, conn);
 	} else if (op.command == CMD_WRITE_LOCK) {
 		return avr_write_lock(op, conn);
@@ -434,6 +464,8 @@ int main(int argc, char **argv)
 				fprintf(stderr, "-s requires a speed value\n");
 				return 1;
 			}
+		} else if (arg == "--dump-buffer") {
+			operations.push_back({_CMD_DUMP_BUFFER});
 		} else {
 			fprintf(stderr, "unknown option: %.*s\n", (int)arg.size(), arg.data());
 			return 1;
