@@ -6,22 +6,22 @@
 
 - `firmware-atmega32u2/` — ファームウェア（avr-gcc、C++11）
   - `main.cpp`: USB の送受信バッファ、STK500v1 実装（`avrisp()`）、BITBANG モード、モード切り替え（`isp_poll()`）
-  - `avrhvpp.cpp` / `avrhvpp.h`: 高電圧パラレルプログラミング（`AVRHVPP` クラス）と AVRHVPP モードのコマンド処理（`AVRHVPP::process()`）
+  - `avrhvpp.cpp` / `avrhvpp.h`: 高電圧パラレルプログラミング（`AVRHVPP` クラス）と AVRHVPP モードのコマンド処理（`AVRHVPP::process()`）。STK500 実装の `flush_buffer` を256バイト共有バッファとして使用する
   - `avrgpio.h`: ピン操作のテンプレート `avr::GPIO<PORT, PIN>`
   - `usb.c` / `usb.h`: USB CDC
   - `waitloop.cpp` / `waitloop.h`: nop ループによる待機
 - `app/` — ホストツール（C++17。`main.cpp` と `serial.cpp`。Qt には依存しない）
 - `common/commands.h` — ファームウェアとホストツールで共有する AVRHVPP モードのコマンド値
-- `pcb/` — KiCad データ。ピンの接続を確かめるときは `pcb/avrhvpp.kicad_pcb` のパッドとネットの対応を見るのが確実です。
+- `pcb/` — KiCad データ。ピンの接続を確かめるときは `pcb/avrpara.kicad_pcb` のパッドとネットの対応を見るのが確実です。
 
 ## ビルドと確認
 
 ```sh
 cd firmware-atmega32u2 && make clean; make     # ファームウェア
-cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト（ビルド確認用）
+cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrhvpp   # ホスト（ビルド確認用）
 ```
 
-- `Makefile` にヘッダの依存関係がありません。ヘッダ（特に `avrhvpp.h` のクラス定義）を変えたら必ず `make clean` してください。古い `main.o` が残ると、クラスの配置がずれたまま壊れたバイナリができます。
+- ファームウェアの `Makefile` は `.d` ファイルを生成し、ヘッダの依存関係を追跡します。
 - 自動テストはありません。動作確認には実機（プログラマ本体とターゲットチップ）が必要です。エージェントはビルドが通るところまで確認し、実機での確認はユーザーに依頼してください。
 - `make write`、`avrdude`、ホストツールの実行など、実機に書き込む操作はユーザーの指示なしに行わないでください。
 
@@ -36,7 +36,8 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト�
 - 0x40 未満のバイトを受けると、どのモードからでも STK500 モードに戻ります（`isp_poll()`）。avrdude などをそのまま使えるようにするための意図的な仕様です。
 - そのため、AVRHVPP モードのコマンドと引数は 0x40 以上に限られます。この制約を外す変更は、ユーザーと仕様を相談してから行ってください。
 - AVRHVPP のコマンド値を追加・変更するときは `common/commands.h` を変更し、ファームウェアとホストツールで同じ定義を使用してください。
-- 任意の8ビット値は、`CMD_LOAD_7BITS` で下位7ビットをロードし、`CMD_ADDR0` / `CMD_ADDR1` や `CMD_DATA0` / `CMD_DATA1` で最上位ビットを表します。
+- 任意の8ビット値は、`CMD_LOAD_7BITS` で下位7ビットをロードし、`CMD_ADDR0` / `CMD_ADDR1`、`CMD_DATA0` / `CMD_DATA1`、`CMD_PAGE0` / `CMD_PAGE1` の0/1側で最上位ビットを表します。
+- `CMD_CLEAR` は一時データとバッファアドレスを0に戻し、256バイトの共有 `flush_buffer` をクリアします。`CMD_DATA0` / `CMD_DATA1` は現在のバッファアドレスへ書き込んでアドレスを1進めます。
 
 ### 高電圧パラレルプログラミング
 - コマンドは、ATmega48/88/168/328P のデータシート「Parallel Programming」の手順に厳密に従って実装してください。手順を省くと、ターゲットのヒューズに不定値が書き込まれることがあります（過去に実際に起きています）。
@@ -54,8 +55,10 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト�
 - 各コマンドは `set_programming_mode(true)` の戻り値を確認し、失敗したら `set_programming_mode(false)` を呼んでから `0\r\n` を返してください。成功の判定は、RDY/BSY が High になることとシグネチャ先頭が 0x1E であることの両方です（モード外では RDY/BSY が浮いて High に見えることがあるため）。
 - ヒューズの書き込みやチップ消去はターゲットを壊す可能性があります。読み出し用のコマンドに、書き込みや消去を混ぜないでください。
 
-### デバッグ用コマンド
-- `CMD_DEBUG`（0x40）はシグネチャ3バイト、low/high/extended fuse、ロックビットをまとめて読み出す読み出し専用コマンドです。
+### コマンドとデバッグ機能
+- 現在のコマンド値は `common/commands.h` を正とします。`CMD_CLEAR` は0x40、`CMD_DEBUG` は0x4Fです。
+- `CMD_DEBUG` の処理は現在 `#if 0` で無効です。ホストツールに `--debug` は残っていますが、ファームウェアから応答はありません。
+- `CMD_READ_16BYTES` は共有バッファの現在位置から16バイトを16進文字列で返し、位置を16進めます。ホストツールの `--dump-buffer` は `CMD_CLEAR` 後、このコマンドを16回送ります。
 - チップ消去は `CMD_CHIP_ERASE`、ロックビット読み書きは `CMD_READ_LOCK` / `CMD_WRITE_LOCK` で処理します。旧プロトコルの0xE0と0xEEは使用しません。
 
 ### 待機関数
@@ -65,11 +68,13 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrisp   # ホスト�
 ### ホストツール
 - 応答は `\r\n` で終わる行です。`Connection::read_line()` で行単位に読んでください。USB のパケットの区切りによって `read()` は途中までのデータで返ることがあるので、1 回の `read()` の結果だけで判定しないでください。
 - ヒューズ書き込み、ロックビット読み書き、チップ消去に対応しています。複数の操作を指定でき、全引数を検証して接続した後、左から順に実行します。失敗したら後続操作を実行せず、非0で終了してください。
-- ロックビット書き込みとチップ消去は不可逆またはデータ消失を伴います。ファームウェア側でもパラメータ設定済みであることを検証し、ホスト側の検証だけに依存しないでください。
+- ホストツールはバッファ引数を使う各操作の前に `CMD_CLEAR` を送り、ヒューズ書き込みでは共有バッファの0番へ対象、1番へ値、ロックビット書き込みでは0番へ値を格納します。現在のファームウェアは設定済み状態を別フラグでは検証せず、共有バッファの内容をそのまま使用します。
+- ロックビット書き込みとチップ消去は不可逆またはデータ消失を伴います。安全性を変更するときは、ホスト側だけでなくファームウェア側の検証も検討してください。
 
 ## 現在の未実装機能
 
-- フラッシュとEEPROMの個別の読み書きは未実装です。
+- `CMD_DEBUG` の応答は無効です。
+- フラッシュとEEPROMの個別の読み書きは未実装です。`CMD_READ_PAGE` / `CMD_WRITE_PAGE` とページ番号設定コマンドは枠だけがあり、処理は行いません。
 
 ## 既知の未対応事項（現状維持と決めたもの）
 

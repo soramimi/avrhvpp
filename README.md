@@ -5,14 +5,14 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 
 ヒューズ設定の誤りで ISP が使えなくなったチップ（SPIEN 無効、DWEN 有効など）の読み出しと復旧を主な目的としています。
 
-> **開発中です。** 現在ホストツールから、シグネチャ、ヒューズ、ロックビットの読み出し、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。
+> **開発中です。** 現在ホストツールから、シグネチャ、ヒューズ、ロックビットの読み出し、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。共有バッファを使ったページ読み書きのプロトコルは準備中ですが、実際のフラッシュ／EEPROM読み書きは未実装です。
 
 ## ディレクトリ構成
 
 | パス | 内容 |
 |---|---|
 | `firmware-atmega32u2/` | プログラマ本体（ATmega32U2）のファームウェア |
-| `app/` | ホスト用コマンドラインツール（`avrisp`） |
+| `app/` | ホスト用コマンドラインツール（`avrhvpp`） |
 | `common/` | ファームウェアとホストツールで共有するコマンド定義 |
 | `pcb/` | KiCad の回路図・基板データ、ガーバー |
 
@@ -50,12 +50,12 @@ avr-gcc と avrdude が必要です。
 
 ```sh
 cd firmware-atmega32u2
-make            # main.hex を生成
+make            # avrhvpp.hex を生成
 make write      # 外部 ISP プログラマ（avrisp, /dev/ttyACM0）で書き込み（ヒューズ hfuse=0xD9, lfuse=0x5E も設定）
 make readfuse   # ATmega32U2 のヒューズを読み出し
 ```
 
-`Makefile` にはヘッダの依存関係が書かれていません。ヘッダを変更したときは `make clean` してからビルドしてください。
+`Makefile` はコンパイル時に `.d` ファイルを生成し、ヘッダの依存関係を追跡します。
 
 ### ホストツール
 
@@ -63,7 +63,7 @@ C++17 のコンパイラが必要です。Qt Creator で `app/avrisp.pro` を開
 
 ```sh
 cd app
-g++ -std=c++17 main.cpp serial.cpp -o avrisp
+g++ -std=c++17 main.cpp serial.cpp -o avrhvpp
 ```
 
 ## 使い方
@@ -79,26 +79,24 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 ### AVRHVPP モード（高電圧パラレル）
 
 ```sh
-./avrisp -p /dev/ttyACM0 --debug               # シグネチャ、ヒューズ、ロックビットをまとめて読み出し
-./avrisp -p /dev/ttyACM0 --read-signature      # シグネチャを読み出し
-./avrisp -p /dev/ttyACM0 --read-fuse-low       # low fuse を読み出し
-./avrisp -p /dev/ttyACM0 --read-fuse-high      # high fuse を読み出し
-./avrisp -p /dev/ttyACM0 --read-fuse-extended       # extended fuse を読み出し
-./avrisp -p /dev/ttyACM0 --read-lock           # ロックビットを読み出し
-./avrisp -p /dev/ttyACM0 --write-fuse-low 0x62 # low fuse に 0x62 を書き込む
-./avrisp -p /dev/ttyACM0 --write-lock 0xFC      # ロックビットに 0xFC を書き込む
-./avrisp -p /dev/ttyACM0 --chip-erase           # Flash、EEPROM、ロックビットを消去
+./avrhvpp -p /dev/ttyACM0 --read-signature      # シグネチャを読み出し
+./avrhvpp -p /dev/ttyACM0 --read-fuse-low       # low fuse を読み出し
+./avrhvpp -p /dev/ttyACM0 --read-fuse-high      # high fuse を読み出し
+./avrhvpp -p /dev/ttyACM0 --read-fuse-extended  # extended fuse を読み出し
+./avrhvpp -p /dev/ttyACM0 --read-lock           # ロックビットを読み出し
+./avrhvpp -p /dev/ttyACM0 --write-fuse-low 0x62 # low fuse に 0x62 を書き込む
+./avrhvpp -p /dev/ttyACM0 --write-lock 0xFC     # ロックビットに 0xFC を書き込む
+./avrhvpp -p /dev/ttyACM0 --chip-erase          # Flash、EEPROM、ロックビットを消去
+./avrhvpp -p /dev/ttyACM0 --dump-buffer         # 共有バッファを16進ダンプする（デバッグ用）
 ```
 
 ヒューズ値を誤るとISPでアクセスできなくなることがあります。ロックビットは0のビットがプログラムされ、1へ戻すにはチップ消去が必要です。チップ消去はFlashとロックビットに加え、EESAVE fuseがプログラムされていなければEEPROMも消去します。書き込む値と対象チップを確認してから実行してください。
 
-出力例:
+シグネチャの出力例:
 
 ```
-0x1e, 0x95, 0x0f, 0x62, 0xd9, 0xff, 0xff
+0x1e, 0x95, 0x0f
 ```
-
-左から順に、シグネチャ 3 バイト、low fuse、high fuse、extended fuse、ロックビットです。
 
 オプション:
 
@@ -106,7 +104,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 |---|---|
 | `-p <port>` | シリアルポート（Windows では `COM3` など） |
 | `-s <speed>`, `--speed <speed>` | ボーレート（既定 115200。USB CDC なので通常は無関係） |
-| `--debug` | シグネチャ3バイト、low/high/extended fuse、ロックビットをまとめて読み出す |
+| `--debug` | 予約済みのデバッグコマンドを送る。ファームウェア側の処理は現在無効で、応答しない |
 | `-rs`, `--read-signature` | シグネチャ3バイトを読み出す |
 | `-rfl`, `--read-fuse-low` | low fuseを読み出す |
 | `-rfh`, `--read-fuse-high` | high fuseを読み出す |
@@ -117,6 +115,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 | `-wfe`, `--write-fuse-extended <value>` | extended fuseへ1バイト書き込む |
 | `-wl`, `--write-lock <value>` | ロックビットへ1バイト書き込む |
 | `--chip-erase` | Flash、EEPROM、ロックビットを消去する。ヒューズは変更しない |
+| `--dump-buffer` | 共有バッファを16バイト×16行の16進数で表示する（デバッグ用） |
 
 コマンドの指定は必須です。書き込み値は16進数で、`0x62`または`62`のように00～FFの範囲で指定します。複数の操作を指定した場合は左から順に実行し、失敗した時点で停止します。ポートや通信速度を含む全引数を検証してから接続するため、オプションの記述順に制約はありません。
 
@@ -141,28 +140,34 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 | コマンド | 応答 | 動作 |
 |---|---|---|
-| `CMD_DEBUG`（0x40） | 16進14文字 + `\r\n` | シグネチャ3バイト、low/high/extended fuse、ロックビットを読み出す |
-| `CMD_READ_SIGNATURE`（0x41） | 16進6文字 + `\r\n` | シグネチャ3バイトを読み出す |
-| `CMD_CHIP_ERASE`（0x4F） | 成功時 `1\r\n`、失敗時 `0\r\n` | チップ消去を実行する |
-| `CMD_READ_FUSE`（0x50） | 16進2文字 + `\r\n` | 直前にロードした番号のヒューズを読み出す |
-| `CMD_READ_LOCK`（0x5F） | 16進2文字 + `\r\n` | ロックビットを読み出す |
-| `CMD_WRITE_FUSE`（0x60） | 成功時 `1\r\n`、失敗時 `0\r\n` | 選択したlow/high/extended fuseへ値を書き込む |
-| `CMD_WRITE_LOCK`（0x6F） | 成功時 `1\r\n`、失敗時 `0\r\n` | ロックビットへ値を書き込む |
-| `CMD_ADDR0`～`CMD_DATA1`（0x70～0x73） | なし | 書き込み対象番号と値の最上位ビットを確定する |
+| `CMD_CLEAR`（0x40） | なし | 一時データとバッファアドレスを0にし、256バイトの共有バッファをクリアする |
+| `CMD_DEBUG`（0x4F） | なし | 予約済み。現在は処理が無効 |
+| `CMD_READ_SIGNATURE`（0x50） | 16進6文字 + `\r\n` | シグネチャ3バイトを読み出す |
+| `CMD_READ_FUSE`（0x51） | 16進2文字 + `\r\n` | 共有バッファの先頭で指定したヒューズを読み出す |
+| `CMD_READ_LOCK`（0x52） | 16進2文字 + `\r\n` | ロックビットを読み出す |
+| `CMD_READ_PAGE`（0x53） | なし | 予約済み。フラッシュ／EEPROMのページ読み出しは未実装 |
+| `CMD_CHIP_ERASE`（0x60） | 成功時 `1\r\n`、失敗時 `0\r\n` | チップ消去を実行する |
+| `CMD_WRITE_FUSE`（0x61） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定したlow/high/extended fuseへ値を書き込む |
+| `CMD_WRITE_LOCK`（0x62） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定した値をロックビットへ書き込む |
+| `CMD_WRITE_PAGE`（0x63） | なし | 予約済み。フラッシュ／EEPROMのページ書き込みは未実装 |
+| `CMD_ADDR0` / `CMD_ADDR1`（0x70 / 0x71） | なし | 共有バッファの読み書き位置を設定する |
+| `CMD_DATA0` / `CMD_DATA1`（0x72 / 0x73） | なし | 共有バッファの現在位置へ1バイト書き込み、位置を1進める |
+| `CMD_PAGE0` / `CMD_PAGE1`（0x74 / 0x75） | なし | ページ番号を設定する（ページ処理自体は未実装） |
+| `CMD_READ_16BYTES`（0x7F） | 16進32文字 + `\r\n` | 共有バッファの現在位置から16バイト読み出し、位置を16進める |
 | `CMD_LOAD_7BITS`（0x80～0xFF） | なし | 下位7ビットを一時データとしてロードする |
 
-`CMD_READ_FUSE` の対象番号は0がlow fuse、1がhigh fuse、2がextended fuseです。ホストツールは `CMD_LOAD_7BITS | 対象番号` と `CMD_ADDR0` / `CMD_ADDR1` を送ってから読み出しコマンドを送ります。
+ファームウェアのSTK500処理とAVRHVPP処理は、同じ256バイトの `flush_buffer` を共有します。AVRHVPPの操作では、最初に `CMD_CLEAR` でバッファと書き込み位置を初期化します。任意の1バイトは `CMD_LOAD_7BITS` で下位7ビットをロードした後、最上位ビットに応じて `CMD_DATA0` または `CMD_DATA1` を送ることで現在位置へ格納されます。格納後、位置は自動的に1進みます。
 
-書き込みでは、対象番号を `CMD_LOAD_7BITS` と `CMD_ADDR0` / `CMD_ADDR1` で指定し、値を `CMD_LOAD_7BITS` と `CMD_DATA0` / `CMD_DATA1` で設定してから `CMD_WRITE_FUSE` を送ります。対象番号は0～2だけが有効です。
+`CMD_READ_FUSE` の対象番号は0がlow fuse、1がhigh fuse、2がextended fuseです。ホストツールは対象番号を共有バッファの0番へ格納してから読み出しコマンドを送ります。
 
-ロックビット書き込みも同じ方法で値を設定してから `CMD_WRITE_LOCK` を送ります。ファームウェアは対象と値が設定されていない書き込み要求を拒否します。
+ヒューズ書き込みでは共有バッファの0番に対象番号、1番に値を格納してから `CMD_WRITE_FUSE` を送ります。ロックビット書き込みでは0番に値を格納してから `CMD_WRITE_LOCK` を送ります。現在のファームウェアは値の設定済み状態を別途管理せず、共有バッファの内容をそのまま使用します。
 
-各読み出し／書き込みコマンドは毎回プログラミングモードに入り、処理後に抜けます。モードに入れなかった場合の応答は `0\r\n` です。
+実装済みのシグネチャ、ヒューズ、ロックビットの読み出し／書き込みとチップ消去は、毎回プログラミングモードに入り、処理後に抜けます。モードに入れなかった場合の応答は `0\r\n` です。
 プログラミングモードに入れたかどうかは、RDY/BSY が High になることと、シグネチャの先頭がメーカーコード 0x1E であることで判定しています。
 
 ## 制約と今後の課題
 
-- フラッシュとEEPROMの個別の読み書きは未実装です。
+- `CMD_DEBUG`、フラッシュとEEPROMの個別の読み書きは未実装です。`CMD_READ_PAGE`、`CMD_WRITE_PAGE`、`CMD_PAGE0`、`CMD_PAGE1` は将来用の枠だけがあります。
 - 0x40未満でSTK500モードへ戻る仕様を維持するため、任意の8ビット値は `CMD_LOAD_7BITS` と `CMD_DATA0` / `CMD_DATA1` などを使って0x40以上のバイトへ符号化します。
 - プログラミングモードへは、VCC を常時供給したまま XTAL1 を 6 回トグルし、+12V を印加する方式で入ります。RSTDISBL がプログラムされたチップでは、ターゲットのプログラムが動いたままになり、モードに入れない可能性があります。対応するには VCC の切り替え回路と、より速い +12V のスイッチが必要です。
 
