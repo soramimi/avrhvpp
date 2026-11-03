@@ -75,3 +75,9 @@ readpage:
 	$(AVRHVPP) --read-page 0 /tmp/page0.bin
 
 
+writepage:
+	$(AVRHVPP) --write-page 0 /tmp/page0.bin
+
+readhex:
+	$(AVRHVPP) --read-hex /tmp/a.hex
+

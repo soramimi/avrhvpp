@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdio>
 #include <deque>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@ constexpr int BITBANG_MODE_TIMEOUT_MS = 10;
 constexpr int PIN_IO_TIMEOUT_MS = 10;
 constexpr int MODE_ENTER_TIMEOUT_MS = 100;
 constexpr int COMMAND_TIMEOUT_MS = 1000;
+constexpr int PAGE_WRITE_TIMEOUT_MS = 2000;
 
 void msleep(int ms)
 {
@@ -195,6 +197,7 @@ public:
 
 struct Options {
 	Serial::Option serial_options;
+	bool chip_erase_before_write_hex = true;
 };
 
 struct Operation {
@@ -202,6 +205,9 @@ struct Operation {
 	uint16_t data = 0;
 	uint8_t value = 0;
 	std::string path;
+	std::vector<uint8_t> bytes;
+	std::vector<uint8_t> page_mask;
+	bool chip_erase = false;
 };
 
 bool parse_byte(char const *text, uint8_t *value)
@@ -226,6 +232,214 @@ bool parse_page(char const *text, uint16_t *page)
 		return false;
 	}
 	*page = (uint16_t)value;
+	return true;
+}
+
+bool read_page_file(char const *path, std::vector<uint8_t> *data)
+{
+	FILE *fp = fopen(path, "rb");
+	if (!fp) {
+		fprintf(stderr, "failed to open %s\n", path);
+		return false;
+	}
+	data->resize(Target::FlashPageBytes + 1);
+	size_t size = fread(data->data(), 1, data->size(), fp);
+	bool ok = !ferror(fp);
+	if (fclose(fp) != 0) {
+		ok = false;
+	}
+	if (!ok) {
+		fprintf(stderr, "failed to read %s\n", path);
+		return false;
+	}
+	if (size != Target::FlashPageBytes) {
+		fprintf(stderr, "%s must be exactly %u bytes\n", path, (unsigned int)Target::FlashPageBytes);
+		return false;
+	}
+	data->resize(Target::FlashPageBytes);
+	return true;
+}
+
+int hex_value(char c)
+{
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+bool parse_hex_record(std::string const &line, std::vector<uint8_t> *record)
+{
+	if (line.size() < 11 || line[0] != ':' || ((line.size() - 1) & 1)) {
+		return false;
+	}
+	record->clear();
+	for (size_t i = 1; i < line.size(); i += 2) {
+		int high = hex_value(line[i]);
+		int low = hex_value(line[i + 1]);
+		if (high < 0 || low < 0) {
+			return false;
+		}
+		record->push_back((uint8_t)((high << 4) | low));
+	}
+	if (record->size() != (size_t)(record->at(0) + 5)) {
+		return false;
+	}
+	uint8_t sum = 0;
+	for (uint8_t value : *record) {
+		sum += value;
+	}
+	return sum == 0;
+}
+
+bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<uint8_t> *page_mask)
+{
+	std::ifstream input(path, std::ios::binary);
+	if (!input) {
+		fprintf(stderr, "failed to open %s\n", path);
+		return false;
+	}
+
+	image->assign(Target::flash_bytes(), 0xff);
+	std::vector<bool> assigned(Target::flash_bytes(), false);
+	page_mask->assign(Target::FlashPageCount, 0);
+	std::string line;
+	std::vector<uint8_t> record;
+	uint32_t base_address = 0;
+	unsigned int line_number = 0;
+	bool eof = false;
+	while (std::getline(input, line)) {
+		line_number++;
+		if (!line.empty() && line.back() == '\r') {
+			line.pop_back();
+		}
+		if (line.empty()) {
+			continue;
+		}
+		if (eof) {
+			fprintf(stderr, "%s:%u: data after EOF record\n", path, line_number);
+			return false;
+		}
+		if (!parse_hex_record(line, &record)) {
+			fprintf(stderr, "%s:%u: invalid Intel HEX record\n", path, line_number);
+			return false;
+		}
+
+		uint8_t size = record[0];
+		uint16_t address = ((uint16_t)record[1] << 8) | record[2];
+		uint8_t type = record[3];
+		if (type == 0x00) {
+			uint64_t absolute = (uint64_t)base_address + address;
+			if (absolute + size > Target::flash_bytes()) {
+				fprintf(stderr, "%s:%u: address is outside ATmega328P flash\n", path, line_number);
+				return false;
+			}
+			for (uint16_t i = 0; i < size; i++) {
+				uint32_t offset = (uint32_t)(absolute + i);
+				uint8_t value = record[4 + i];
+				if (assigned[offset] && image->at(offset) != value) {
+					fprintf(stderr, "%s:%u: conflicting data at address 0x%04lx\n", path, line_number, (unsigned long)offset);
+					return false;
+				}
+				image->at(offset) = value;
+				assigned[offset] = true;
+				page_mask->at(offset / Target::FlashPageBytes) = 1;
+			}
+		} else if (type == 0x01) {
+			if (size != 0 || address != 0) {
+				fprintf(stderr, "%s:%u: invalid EOF record\n", path, line_number);
+				return false;
+			}
+			eof = true;
+		} else if (type == 0x02) {
+			if (size != 2 || address != 0) {
+				fprintf(stderr, "%s:%u: invalid extended segment address record\n", path, line_number);
+				return false;
+			}
+			base_address = ((((uint32_t)record[4] << 8) | record[5]) << 4);
+		} else if (type == 0x04) {
+			if (size != 2 || address != 0) {
+				fprintf(stderr, "%s:%u: invalid extended linear address record\n", path, line_number);
+				return false;
+			}
+			base_address = ((((uint32_t)record[4] << 8) | record[5]) << 16);
+		} else if (type == 0x03 || type == 0x05) {
+			if (size != 4 || address != 0) {
+				fprintf(stderr, "%s:%u: invalid start address record\n", path, line_number);
+				return false;
+			}
+		} else {
+			fprintf(stderr, "%s:%u: unsupported Intel HEX record type 0x%02x\n", path, line_number, type);
+			return false;
+		}
+	}
+	if (input.bad()) {
+		fprintf(stderr, "failed to read %s\n", path);
+		return false;
+	}
+	if (!eof) {
+		fprintf(stderr, "%s: missing EOF record\n", path);
+		return false;
+	}
+	return true;
+}
+
+bool write_hex_record(FILE *fp, uint16_t address, uint8_t type, uint8_t const *data, uint8_t size)
+{
+	uint8_t sum = size;
+	sum += address >> 8;
+	sum += address;
+	sum += type;
+	if (fprintf(fp, ":%02X%04X%02X", (unsigned int)size, (unsigned int)address, (unsigned int)type) < 0) {
+		return false;
+	}
+	for (uint8_t i = 0; i < size; i++) {
+		sum += data[i];
+		if (fprintf(fp, "%02X", (unsigned int)data[i]) < 0) {
+			return false;
+		}
+	}
+	uint8_t checksum = 0 - sum;
+	return fprintf(fp, "%02X\r\n", (unsigned int)checksum) >= 0;
+}
+
+bool write_hex_file(char const *path, std::vector<uint8_t> const &image, unsigned int *records)
+{
+	FILE *fp = fopen(path, "wb");
+	if (!fp) {
+		fprintf(stderr, "failed to open %s\n", path);
+		return false;
+	}
+
+	bool ok = true;
+	*records = 0;
+	for (uint32_t address = 0; address < image.size(); address += 16) {
+		bool blank = true;
+		for (uint8_t i = 0; i < 16; i++) {
+			if (image[address + i] != 0xff) {
+				blank = false;
+				break;
+			}
+		}
+		if (blank) {
+			continue;
+		}
+		if (!write_hex_record(fp, (uint16_t)address, 0x00, &image[address], 16)) {
+			ok = false;
+			break;
+		}
+		(*records)++;
+	}
+	if (ok && !write_hex_record(fp, 0, 0x01, nullptr, 0)) {
+		ok = false;
+	}
+	if (fclose(fp) != 0) {
+		ok = false;
+	}
+	if (!ok) {
+		fprintf(stderr, "failed to write %s\n", path);
+		return false;
+	}
 	return true;
 }
 
@@ -340,7 +554,7 @@ bool avr_chip_erase(Connection *conn)
 	write_command(conn, CMD_CHIP_ERASE);
 
 	std::vector<char> line;
-	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
+	if (!conn->read_line(&line, PAGE_WRITE_TIMEOUT_MS)) {
 		fprintf(stderr, "no response\n");
 		return false;
 	}
@@ -352,29 +566,21 @@ bool avr_chip_erase(Connection *conn)
 	return false;
 }
 
-int hex_value(char c)
-{
-	if (c >= '0' && c <= '9') return c - '0';
-	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-	return -1;
-}
-
-bool avr_read_page(Operation const &op, Connection *conn)
+bool avr_fetch_page(uint16_t page, std::vector<uint8_t> *data, Connection *conn)
 {
 	std::vector<char> line;
-	std::vector<uint8_t> data;
-	data.reserve(Target::FlashPageBytes);
+	data->clear();
+	data->reserve(Target::FlashPageBytes);
 
 	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, (uint8_t)op.data, CMD_PAGE0, CMD_PAGE1);
+	write_encoded_byte(conn, (uint8_t)page, CMD_PAGE0, CMD_PAGE1);
 	write_command(conn, CMD_READ_PAGE);
 	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
 		fprintf(stderr, "no response\n");
 		return false;
 	}
 	if (!(line == "1")) {
-		fprintf(stderr, "failed to read flash page %u\n", (unsigned int)op.data);
+		fprintf(stderr, "failed to read flash page %u\n", (unsigned int)page);
 		return false;
 	}
 
@@ -396,8 +602,17 @@ bool avr_read_page(Operation const &op, Connection *conn)
 				fprintf(stderr, "invalid page data\n");
 				return false;
 			}
-			data.push_back((uint8_t)((high << 4) | low));
+			data->push_back((uint8_t)((high << 4) | low));
 		}
+	}
+	return true;
+}
+
+bool avr_read_page(Operation const &op, Connection *conn)
+{
+	std::vector<uint8_t> data;
+	if (!avr_fetch_page(op.data, &data, conn)) {
+		return false;
 	}
 
 	FILE *fp = fopen(op.path.c_str(), "wb");
@@ -414,6 +629,110 @@ bool avr_read_page(Operation const &op, Connection *conn)
 		return false;
 	}
 	printf("page %u read: %s\n", (unsigned int)op.data, op.path.c_str());
+	return true;
+}
+
+bool avr_read_hex(Operation const &op, Connection *conn)
+{
+	std::vector<uint8_t> image(Target::flash_bytes());
+	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
+		std::vector<uint8_t> data;
+		if (!avr_fetch_page(page, &data, conn)) {
+			return false;
+		}
+		memcpy(&image[(size_t)page * Target::FlashPageBytes], data.data(), Target::FlashPageBytes);
+	}
+
+	unsigned int records;
+	if (!write_hex_file(op.path.c_str(), image, &records)) {
+		return false;
+	}
+	printf("hex read: %s (%u data records)\n", op.path.c_str(), records);
+	return true;
+}
+
+bool avr_write_page(Operation const &op, Connection *conn)
+{
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, (uint8_t)op.data, CMD_PAGE0, CMD_PAGE1);
+	for (uint8_t data : op.bytes) {
+		write_encoded_byte(conn, data, CMD_DATA0, CMD_DATA1);
+	}
+	write_command(conn, CMD_WRITE_PAGE);
+
+	std::vector<char> line;
+	if (!conn->read_line(&line, PAGE_WRITE_TIMEOUT_MS)) {
+		fprintf(stderr, "no response\n");
+		return false;
+	}
+	if (line == "1") {
+		printf("page %u written: %s\n", (unsigned int)op.data, op.path.c_str());
+		return true;
+	}
+	fprintf(stderr, "failed to write flash page %u; the page must be blank or already match the input\n", (unsigned int)op.data);
+	return false;
+}
+
+bool avr_write_hex(Operation const &op, Connection *conn)
+{
+	if (op.chip_erase && !avr_chip_erase(conn)) {
+		return false;
+	}
+
+	std::vector<uint8_t> pages_to_write(Target::FlashPageCount, 0);
+	unsigned int pages_present = 0;
+	unsigned int pages_matching = 0;
+	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
+		size_t offset = (size_t)page * Target::FlashPageBytes;
+		if (!op.page_mask[page]) {
+			continue;
+		}
+		pages_present++;
+
+		std::vector<uint8_t> current;
+		if (!avr_fetch_page(page, &current, conn)) {
+			return false;
+		}
+		bool matches = true;
+		bool blank = true;
+		for (uint16_t i = 0; i < Target::FlashPageBytes; i++) {
+			if (current[i] != op.bytes[offset + i]) {
+				matches = false;
+			}
+			if (current[i] != 0xff) {
+				blank = false;
+			}
+		}
+		if (matches) {
+			pages_matching++;
+		} else if (blank) {
+			pages_to_write[page] = 1;
+		} else {
+			fprintf(stderr, "flash page %u is not blank and does not match %s; no pages were written\n", (unsigned int)page, op.path.c_str());
+			return false;
+		}
+	}
+
+	unsigned int pages_written = 0;
+	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
+		if (!pages_to_write[page]) {
+			continue;
+		}
+		size_t offset = (size_t)page * Target::FlashPageBytes;
+		Operation page_operation;
+		page_operation.command = CMD_WRITE_PAGE;
+		page_operation.data = page;
+		page_operation.path = op.path;
+		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + Target::FlashPageBytes);
+		if (!avr_write_page(page_operation, conn)) {
+			return false;
+		}
+		pages_written++;
+	}
+
+	printf("hex written: %s (%u data pages, %u written, %u already matched%s)\n",
+		op.path.c_str(), pages_present, pages_written, pages_matching,
+		op.chip_erase ? ", chip erased" : "");
 	return true;
 }
 
@@ -454,6 +773,10 @@ bool perform(Operation const &op, Connection *conn)
 			putchar('\n');
 		}
 		return true;
+	} else if (op.command == _CMD_READ_HEX) {
+		return avr_read_hex(op, conn);
+	} else if (op.command == _CMD_WRITE_HEX) {
+		return avr_write_hex(op, conn);
 	} else if (op.command == CMD_WRITE_FUSE) {
 		return avr_write_fuse(op, conn);
 	} else if (op.command == CMD_WRITE_LOCK) {
@@ -462,6 +785,8 @@ bool perform(Operation const &op, Connection *conn)
 		return avr_chip_erase(conn);
 	} else if (op.command == CMD_READ_PAGE) {
 		return avr_read_page(op, conn);
+	} else if (op.command == CMD_WRITE_PAGE) {
+		return avr_write_page(op, conn);
 	} else {
 		return avr_read_status(op, conn);
 	}
@@ -522,6 +847,43 @@ int main(int argc, char **argv)
 			}
 			std::string path = argv[argi++];
 			operations.push_back({CMD_READ_PAGE, page, 0, path});
+		} else if (arg == "--write-page") {
+			uint16_t page;
+			if (argi >= argc || !parse_page(argv[argi++], &page)) {
+				fprintf(stderr, "--write-page requires a page number from 0 to %u\n", (unsigned int)(Target::FlashPageCount - 1));
+				return 1;
+			}
+			if (argi >= argc) {
+				fprintf(stderr, "--write-page requires an input file\n");
+				return 1;
+			}
+			std::string path = argv[argi++];
+			std::vector<uint8_t> data;
+			if (!read_page_file(path.c_str(), &data)) {
+				return 1;
+			}
+			operations.push_back({CMD_WRITE_PAGE, page, 0, path, data});
+		} else if (arg == "--write-hex") {
+			if (argi >= argc) {
+				fprintf(stderr, "--write-hex requires an Intel HEX file\n");
+				return 1;
+			}
+			std::string path = argv[argi++];
+			std::vector<uint8_t> image;
+			std::vector<uint8_t> page_mask;
+			if (!read_hex_file(path.c_str(), &image, &page_mask)) {
+				return 1;
+			}
+			operations.push_back({_CMD_WRITE_HEX, 0, 0, path, image, page_mask});
+		} else if (arg == "--no-chip-erase") {
+			opts.chip_erase_before_write_hex = false;
+		} else if (arg == "--read-hex") {
+			if (argi >= argc) {
+				fprintf(stderr, "--read-hex requires an output file\n");
+				return 1;
+			}
+			std::string path = argv[argi++];
+			operations.push_back({_CMD_READ_HEX, 0, 0, path});
 		} else if (arg == "-wfl" || arg == "--write-fuse-low") {
 			uint8_t value;
 			if (argi >= argc || !parse_byte(argv[argi++], &value)) {
@@ -577,6 +939,12 @@ int main(int argc, char **argv)
 	if (operations.empty()) {
 		fprintf(stderr, "no command specified\n");
 		return 1;
+	}
+
+	for (Operation &operation : operations) {
+		if (operation.command == _CMD_WRITE_HEX) {
+			operation.chip_erase = opts.chip_erase_before_write_hex;
+		}
 	}
 
 	Connection conn;

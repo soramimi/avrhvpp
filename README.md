@@ -5,7 +5,13 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 
 ヒューズ設定の誤りで ISP が使えなくなったチップ（SPIEN 無効、DWEN 有効など）の読み出しと復旧を主な目的としています。
 
-> **開発中です。** 現在ホストツールから、シグネチャ、ヒューズ、ロックビット、ATmega328PのFlashページの読み出し、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。Flashページ書き込みとEEPROM読み書きは未実装です。
+現在ホストツールから、シグネチャ、ヒューズ、ロックビット、ATmega328PのFlashページ／Intel HEXの読み書き、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。`--read-page`、`--write-page`、`--read-hex`、`--write-hex` はATmega328Pの実機で動作確認済みです。EEPROM読み書きは未実装です。
+
+## 対応ターゲット
+
+現在のFlash読み書き対象はATmega328P（シグネチャ `1E 95 0F`、32 KiB、128バイト×256ページ）です。ターゲット固有のシグネチャ、ページサイズ、ページ数、ワードアドレス計算は `common/target.h` に集約しています。
+
+次の開発目標は、3バイトのシグネチャからターゲット定義を選択し、ATmega328P以外のチップでも同じページ／Intel HEXコマンドを利用できるようにすることです。
 
 ## ディレクトリ構成
 
@@ -85,13 +91,17 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-extended  # extended fuse を読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-lock           # ロックビットを読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-page 0 page.bin # Flashのページ0を128バイトのファイルへ保存
+./avrhvpp -p /dev/ttyACM0 --read-hex flash.hex   # Flash全体をIntel HEXへ保存
+./avrhvpp -p /dev/ttyACM0 --write-page 0 page.bin # 128バイトのファイルをFlashのページ0へ書き込む
+./avrhvpp -p /dev/ttyACM0 --write-hex example/blink.hex # Intel HEXをFlashへ書き込む
+./avrhvpp -p /dev/ttyACM0 --no-chip-erase --write-hex example/blink.hex # チップ消去せずに書き込む
 ./avrhvpp -p /dev/ttyACM0 --write-fuse-low 0x62 # low fuse に 0x62 を書き込む
 ./avrhvpp -p /dev/ttyACM0 --write-lock 0xFC     # ロックビットに 0xFC を書き込む
 ./avrhvpp -p /dev/ttyACM0 --chip-erase          # Flash、EEPROM、ロックビットを消去
 ./avrhvpp -p /dev/ttyACM0 --dump-buffer         # 共有バッファを16進ダンプする（デバッグ用）
 ```
 
-ヒューズ値を誤るとISPでアクセスできなくなることがあります。ロックビットは0のビットがプログラムされ、1へ戻すにはチップ消去が必要です。チップ消去はFlashとロックビットに加え、EESAVE fuseがプログラムされていなければEEPROMも消去します。書き込む値と対象チップを確認してから実行してください。
+ヒューズ値を誤るとISPでアクセスできなくなることがあります。ロックビットは0のビットがプログラムされ、1へ戻すにはチップ消去が必要です。チップ消去はFlashとロックビットに加え、EESAVE fuseがプログラムされていなければEEPROMも消去します。Flashページ書き込みは、ページが消去済み（全バイト `0xFF`）か、すでに入力データと完全一致する場合だけ成功します。`--write-hex` は既定で書き込み前にチップ消去します。消去したくない場合は `--no-chip-erase` を指定してください。書き込む値と対象チップを確認してから実行してください。
 
 シグネチャの出力例:
 
@@ -112,6 +122,10 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 | `-rfe`, `--read-fuse-extended` | extended fuseを読み出す |
 | `-rl`, `--read-lock` | ロックビットを読み出す |
 | `--read-page <page> <file>` | ATmega328PのFlashページ（0～255）を128バイトのバイナリファイルへ保存する |
+| `--read-hex <file>` | ATmega328PのFlash全体を読み出してIntel HEXへ保存する |
+| `--write-page <page> <file>` | 128バイトのバイナリファイルをATmega328PのFlashページ（0～255）へ書き込む |
+| `--write-hex <file>` | Intel HEXを解析し、チップ消去後に指定されたFlashページを書き込む |
+| `--no-chip-erase` | `--write-hex` 前の自動チップ消去を無効にする。引数内の位置は問わない |
 | `-wfl`, `--write-fuse-low <value>` | low fuseへ1バイト書き込む |
 | `-wfh`, `--write-fuse-high <value>` | high fuseへ1バイト書き込む |
 | `-wfe`, `--write-fuse-extended <value>` | extended fuseへ1バイト書き込む |
@@ -151,7 +165,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 | `CMD_CHIP_ERASE`（0x60） | 成功時 `1\r\n`、失敗時 `0\r\n` | チップ消去を実行する |
 | `CMD_WRITE_FUSE`（0x61） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定したlow/high/extended fuseへ値を書き込む |
 | `CMD_WRITE_LOCK`（0x62） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定した値をロックビットへ書き込む |
-| `CMD_WRITE_PAGE`（0x63） | なし | 予約済み。フラッシュ／EEPROMのページ書き込みは未実装 |
+| `CMD_WRITE_PAGE`（0x63） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファの128バイトを選択したATmega328PのFlashページへ書き込む |
 | `CMD_ADDR0` / `CMD_ADDR1`（0x70 / 0x71） | なし | 共有バッファの読み書き位置を設定する |
 | `CMD_DATA0` / `CMD_DATA1`（0x72 / 0x73） | なし | 共有バッファの現在位置へ1バイト書き込み、位置を1進める |
 | `CMD_PAGE0` / `CMD_PAGE1`（0x74 / 0x75） | なし | ページ番号を設定する |
@@ -166,12 +180,22 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 Flashページ読み出しでは `CMD_CLEAR` 後に `CMD_PAGE0` / `CMD_PAGE1` で0～255のページを指定し、`CMD_READ_PAGE` を送ります。成功すると128バイトが共有バッファへ格納されるため、バッファアドレスを0に設定し、`CMD_READ_16BYTES` を8回送って回収します。読み出し時はシグネチャ3バイトがATmega328Pの `1E 95 0F` と一致することも確認します。ページサイズ、ページ数、シグネチャは `common/target.h` で共有しています。
 
-実装済みのシグネチャ、ヒューズ、ロックビットの読み出し／書き込みとチップ消去は、毎回プログラミングモードに入り、処理後に抜けます。モードに入れなかった場合の応答は `0\r\n` です。
+`--read-hex` は `CMD_READ_PAGE` で全256ページを読み出し、すべて成功した後に出力ファイルを作成します。Intel HEXは16バイトのデータレコードとEOFレコードで構成し、全バイト `0xFF` のデータレコードは省略します。省略されたアドレスは消去済みの `0xFF` として扱います。
+
+Flashページ書き込みでは `CMD_CLEAR` とページ指定に続けて、`CMD_DATA0` / `CMD_DATA1` で128バイトを先頭から連続して共有バッファへ格納し、`CMD_WRITE_PAGE` を送ります。ファームウェアはページ指定済み、受信サイズ、ATmega328Pの完全なシグネチャを確認します。現在のページが入力と完全一致する場合は再試行として成功し、全バイト `0xFF` の場合だけ実際に書き込みます。書き込み後はターゲットから全128バイトを再読出しし、完全一致した場合だけ成功を返します。
+
+`--write-hex` はIntel HEXのチェックサム、EOF、重複データ、ATmega328Pの32 KiB範囲を接続前に検証します。データ、EOF、拡張セグメントアドレス、拡張リニアアドレス、開始アドレスの各レコードに対応します。検証成功後、既定ではチップ消去を実行し、HEXで指定されたページを読み出して消去を確認してから `CMD_WRITE_PAGE` で書き込みます。HEXで省略された領域は書き込み対象になりません。
+
+`--no-chip-erase` を指定すると自動チップ消去を省略します。この場合はHEXで指定された全ページを先に読み出し、各ページが消去済みまたは入力イメージと完全一致することを確認してから、必要なページだけを書き込みます。既存内容と競合するページがあれば、1ページも書き込まず終了します。
+
+実装済みのシグネチャ、ヒューズ、ロックビット、Flashページの読み出し／書き込みとチップ消去は、毎回プログラミングモードに入り、処理後に抜けます。モードに入れなかった場合の応答は `0\r\n` です。
 プログラミングモードに入れたかどうかは、RDY/BSY が High になることと、シグネチャの先頭がメーカーコード 0x1E であることで判定しています。
 
 ## 制約と今後の課題
 
-- `CMD_DEBUG`、Flashページ書き込み、EEPROMの読み書きは未実装です。`CMD_WRITE_PAGE` は将来用の枠だけがあります。
+- Flash読み書きのターゲットは現在ATmega328Pに固定されています。別チップへ対応するときは、シグネチャ、Flash容量、ページサイズ、ページ数、HVPPのアドレス指定と書き込み手順をデータシートで確認し、ターゲット定義として追加します。
+- 現在のページ番号は8ビットで、最大256ページです。256ページを超えるチップへ対応する場合は、ページ番号の上位バイトを安全に送るプロトコル拡張が必要です。
+- `CMD_DEBUG`とEEPROMの読み書きは未実装です。
 - 0x40未満でSTK500モードへ戻る仕様を維持するため、任意の8ビット値は `CMD_LOAD_7BITS` と `CMD_DATA0` / `CMD_DATA1` などを使って0x40以上のバイトへ符号化します。
 - プログラミングモードへは、VCC を常時供給したまま XTAL1 を 6 回トグルし、+12V を印加する方式で入ります。RSTDISBL がプログラムされたチップでは、ターゲットのプログラムが動いたままになり、モードに入れない可能性があります。対応するには VCC の切り替え回路と、より速い +12V のスイッチが必要です。
 

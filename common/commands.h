@@ -22,6 +22,8 @@ enum Command {
 	CMD_LOAD_7BITS = 0x80,
 	
 	_CMD_DUMP_BUFFER = 0x100,
+	_CMD_WRITE_HEX = 0x101,
+	_CMD_READ_HEX = 0x102,
 };
 
 #endif // COMMANDS_H

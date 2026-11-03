@@ -179,6 +179,15 @@ void AVRHVPP::pulse_wr()
 	usleep(10);
 }
 
+void AVRHVPP::pulse_pagel()
+{
+	usleep(1);
+	write_pagel(1);
+	usleep(1);
+	write_pagel(0);
+	usleep(1);
+}
+
 void AVRHVPP::load_flash_command(uint8_t command)
 {
 	write_oe(1);
@@ -204,6 +213,20 @@ void AVRHVPP::load_flash_address(uint8_t address, bool high)
 	set_data_pin_mode(PinMode::Output);
 	pulse_xtal1();
 	set_data_pin_mode(PinMode::Input);
+}
+
+void AVRHVPP::load_flash_data(uint8_t data, bool high)
+{
+	write_oe(1);
+	write_xa1(0);
+	write_xa0(1);
+	write_bs1(high);
+	write_bs2(0);
+	write_data_pins(data);
+	set_data_pin_mode(PinMode::Output);
+	pulse_xtal1();
+	set_data_pin_mode(PinMode::Input);
+	write_xa0(0);
 }
 
 void AVRHVPP::read_flash_word(uint16_t address, uint8_t *low, uint8_t *high)
@@ -273,6 +296,62 @@ bool AVRHVPP::read_flash_page(uint16_t page, uint8_t *data, uint16_t size)
 		read_flash_word(address + word, data + word * 2, data + word * 2 + 1);
 	}
 	return true;
+}
+
+bool AVRHVPP::compare_flash_page(uint16_t page, uint8_t const *data, uint16_t size, bool *matches, bool *blank)
+{
+	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+		return false;
+	}
+
+	*matches = true;
+	*blank = true;
+	uint16_t address = Target::flash_word_address(page, 0);
+	load_flash_command(0x02);
+	load_flash_address((uint8_t)(address >> 8), true);
+	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+		uint8_t low;
+		uint8_t high;
+		read_flash_word(address + word, &low, &high);
+		if (low != data[word * 2] || high != data[word * 2 + 1]) {
+			*matches = false;
+		}
+		if (low != 0xff || high != 0xff) {
+			*blank = false;
+		}
+	}
+	return true;
+}
+
+bool AVRHVPP::write_flash_page(uint16_t page, uint8_t const *data, uint16_t size)
+{
+	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+		return false;
+	}
+
+	uint16_t address = Target::flash_word_address(page, 0);
+	load_flash_command(0x10);
+	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+		load_flash_address((uint8_t)(address + word), false);
+		load_flash_data(data[word * 2], false);
+		load_flash_data(data[word * 2 + 1], true);
+		write_bs1(1);
+		pulse_pagel();
+	}
+	load_flash_address((uint8_t)(address >> 8), true);
+	pulse_wr();
+	if (!wait_ready()) {
+		return false;
+	}
+	load_flash_command(0x00);
+	return true;
+}
+
+bool AVRHVPP::verify_flash_page(uint16_t page, uint8_t const *data, uint16_t size)
+{
+	bool matches;
+	bool blank;
+	return compare_flash_page(page, data, size, &matches, &blank) && matches;
 }
 
 void AVRHVPP::load_data_low(uint8_t c)
@@ -376,6 +455,8 @@ uint8_t data_7bits_ = 0;
 uint8_t addr_ = 0;
 uint16_t page_ = 0;
 bool page_valid_ = false;
+uint16_t buffer_data_count_ = 0;
+bool buffer_data_valid_ = false;
 
 static inline uint8_t address()
 {
@@ -435,6 +516,8 @@ void AVRHVPP::process(uint8_t c)
 		addr_ = 0;
 		page_ = 0;
 		page_valid_ = false;
+		buffer_data_count_ = 0;
+		buffer_data_valid_ = true;
 		if (1) {
 			memset(flush_buffer, 0, sizeof(flush_buffer));
 		} else { // debug
@@ -444,17 +527,29 @@ void AVRHVPP::process(uint8_t c)
 		}
 	} else if (c == CMD_ADDR0) {
 		addr_ = data_7bits_ & 0x7f;
+		buffer_data_valid_ = false;
 	} else if (c == CMD_ADDR1) {
 		addr_ = (data_7bits_ & 0x7f) | 0x80;
+		buffer_data_valid_ = false;
 	} else if (c == CMD_DATA0) {
 		uint8_t data = data_7bits_ & 0x7f;
 		if (addr_ < sizeof(flush_buffer)) {
+			if (!buffer_data_valid_ || addr_ != buffer_data_count_) {
+				buffer_data_valid_ = false;
+			} else {
+				buffer_data_count_++;
+			}
 			flush_buffer[addr_] = data;
 			addr_++;
 		}
 	} else if (c == CMD_DATA1) {
 		uint8_t data = (data_7bits_ & 0x7f) | 0x80;
 		if (addr_ < sizeof(flush_buffer)) {
+			if (!buffer_data_valid_ || addr_ != buffer_data_count_) {
+				buffer_data_valid_ = false;
+			} else {
+				buffer_data_count_++;
+			}
 			flush_buffer[addr_] = data;
 			addr_++;
 		}
@@ -551,9 +646,35 @@ void AVRHVPP::process(uint8_t c)
 			}
 		}
 	} else if (c == CMD_WRITE_PAGE) {
-		uint8_t page  = page_;
-		uint8_t const *data = flush_buffer;
-		// not implemented yet
+		uint16_t page = page_;
+		bool parameters_valid = page_valid_
+			&& page < Target::FlashPageCount
+			&& buffer_data_valid_
+			&& buffer_data_count_ == Target::FlashPageBytes;
+		page_valid_ = false;
+		buffer_data_valid_ = false;
+		buffer_data_count_ = 0;
+		if (!parameters_valid) {
+			SendNACK();
+			return;
+		}
+		if (EnterProgrammingMode()) {
+			bool matches = false;
+			bool blank = false;
+			bool ok = matches_target_signature()
+				&& compare_flash_page(page, flush_buffer, Target::FlashPageBytes, &matches, &blank);
+			if (ok && !matches) {
+				ok = blank
+					&& write_flash_page(page, flush_buffer, Target::FlashPageBytes)
+					&& verify_flash_page(page, flush_buffer, Target::FlashPageBytes);
+			}
+			set_programming_mode(false);
+			if (ok) {
+				SendACK();
+			} else {
+				SendNACK();
+			}
+		}
 	} else if (c == CMD_READ_16BYTES) {
 		char tmp[35];
 		for (uint8_t i = 0; i < 16; i++) {
