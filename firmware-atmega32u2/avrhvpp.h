@@ -40,7 +40,9 @@ private:
 	void write_data_pins(uint8_t c);
 	void pulse_xtal1();
 	void pulse_wr();
-	uint8_t read_data_();
+	void load_flash_command(uint8_t command);
+	void load_flash_address(uint8_t address, bool high);
+	void read_flash_word(uint16_t address, uint8_t *low, uint8_t *high);
 private:
 	void write_byte(char c);
 	void write_string(const char *p);
@@ -53,6 +55,8 @@ public:
 	bool wait_ready();
 	uint8_t read_data();
 	uint8_t read_signature(int addr);
+	bool matches_target_signature();
+	bool read_flash_page(uint16_t page, uint8_t *data, uint16_t size);
 	void load_data_low(uint8_t c);
 
 	enum class Fuse {

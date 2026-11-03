@@ -12,6 +12,7 @@ SOURCES += \
 
 HEADERS += \
 	../common/commands.h \
+	../common/target.h \
 	serial.h
 
 DISTFILES += \

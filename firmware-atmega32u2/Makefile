@@ -63,10 +63,15 @@ readfuse:
 
 #
 
-AVRHVPP := ../app/_bin/avrhvpp
+AVRHVPP := ../app/_bin/avrhvpp -p /dev/ttyACM0
 
 test:
-	$(AVRHVPP) -p /dev/ttyACM0 -wfl 62
-	$(AVRHVPP) -p /dev/ttyACM0 -rfl
-	$(AVRHVPP) -p /dev/ttyACM0 -wfl e2
-	$(AVRHVPP) -p /dev/ttyACM0 -rfl
+	$(AVRHVPP) -wfl 62
+	$(AVRHVPP) -rfl
+	$(AVRHVPP) -wfl e2
+	$(AVRHVPP) -rfl
+
+readpage:
+	$(AVRHVPP) --read-page 0 /tmp/page0.bin
+
+

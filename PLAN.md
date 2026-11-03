@@ -1,5 +1,15 @@
 # ATmega328P Flash ページ読み書き実装計画
 
+## 実装状況
+
+- [x] ターゲット定義とワードアドレス計算
+- [x] Flashページの低レベル読み出し
+- [x] `CMD_READ_PAGE` と共有バッファ経由の転送
+- [x] ホストツールの `--read-page <page> <output-file>`
+- [x] ファームウェアとホストツールのビルド確認
+- [ ] ATmega328P実機でのページ読み出し確認
+- [ ] Flashページ書き込み
+
 ## 対象範囲
 
 ATmega328P の高電圧パラレルプログラミング（HVPP）による Flash ページ読み書きを実装する。EEPROM の読み書きは今回の対象外とする。
@@ -19,23 +29,24 @@ ATmega328P の Flash 構成は以下のとおり。
 
 既存の256バイト `flush_buffer` と、予約済みの `CMD_READ_PAGE`、`CMD_WRITE_PAGE`、`CMD_PAGE0`、`CMD_PAGE1`、`CMD_READ_16BYTES` を利用する。新しいページバッファは追加せず、RAM消費を抑える。
 
-チップ固有値は処理中へ直接埋め込まず、1か所へまとめる。
+チップ固有値は処理中へ直接埋め込まず、ファームウェアとホストツールで共有する `common/target.h` へまとめる。
 
 ```cpp
-struct TargetProfile {
-	uint8_t signature[3];
-	uint16_t flash_page_bytes;
-	uint16_t flash_page_count;
+struct ATmega328P {
+	enum {
+		Signature0 = 0x1e,
+		Signature1 = 0x95,
+		Signature2 = 0x0f,
+		FlashPageBytes = 128,
+		FlashPageWords = FlashPageBytes / 2,
+		FlashPageCount = 256,
+	};
 };
 
-static constexpr TargetProfile target_atmega328p = {
-	{0x1e, 0x95, 0x0f},
-	128,
-	256,
-};
+typedef ATmega328P Target;
 ```
 
-最初の実装では ATmega328P 固定でよいが、低レベル関数へページサイズやページ数を直接埋め込まない。将来は `TargetProfile` を追加し、3バイトのシグネチャで選択できる構成へ拡張する。
+最初の実装では ATmega328P 固定でよいが、低レベル関数へページサイズやページ数を直接埋め込まない。将来はターゲット型を追加し、3バイトのシグネチャで選択できる構成へ拡張する。
 
 既存プロトコルのページ番号は8ビットなので、当面は最大256ページのデバイスを対象とする。256ページを超えるデバイスに対応するときは、ページ番号の上位バイトを送るコマンドを追加する。
 

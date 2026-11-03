@@ -5,7 +5,7 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 
 ヒューズ設定の誤りで ISP が使えなくなったチップ（SPIEN 無効、DWEN 有効など）の読み出しと復旧を主な目的としています。
 
-> **開発中です。** 現在ホストツールから、シグネチャ、ヒューズ、ロックビットの読み出し、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。共有バッファを使ったページ読み書きのプロトコルは準備中ですが、実際のフラッシュ／EEPROM読み書きは未実装です。
+> **開発中です。** 現在ホストツールから、シグネチャ、ヒューズ、ロックビット、ATmega328PのFlashページの読み出し、low/high/extended fuseとロックビットの書き込み、チップ消去ができます。Flashページ書き込みとEEPROM読み書きは未実装です。
 
 ## ディレクトリ構成
 
@@ -13,7 +13,7 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 |---|---|
 | `firmware-atmega32u2/` | プログラマ本体（ATmega32U2）のファームウェア |
 | `app/` | ホスト用コマンドラインツール（`avrhvpp`） |
-| `common/` | ファームウェアとホストツールで共有するコマンド定義 |
+| `common/` | ファームウェアとホストツールで共有するコマンド定義とターゲット定義 |
 | `pcb/` | KiCad の回路図・基板データ、ガーバー |
 
 ## ハードウェア
@@ -84,6 +84,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-high      # high fuse を読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-extended  # extended fuse を読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-lock           # ロックビットを読み出し
+./avrhvpp -p /dev/ttyACM0 --read-page 0 page.bin # Flashのページ0を128バイトのファイルへ保存
 ./avrhvpp -p /dev/ttyACM0 --write-fuse-low 0x62 # low fuse に 0x62 を書き込む
 ./avrhvpp -p /dev/ttyACM0 --write-lock 0xFC     # ロックビットに 0xFC を書き込む
 ./avrhvpp -p /dev/ttyACM0 --chip-erase          # Flash、EEPROM、ロックビットを消去
@@ -110,6 +111,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 | `-rfh`, `--read-fuse-high` | high fuseを読み出す |
 | `-rfe`, `--read-fuse-extended` | extended fuseを読み出す |
 | `-rl`, `--read-lock` | ロックビットを読み出す |
+| `--read-page <page> <file>` | ATmega328PのFlashページ（0～255）を128バイトのバイナリファイルへ保存する |
 | `-wfl`, `--write-fuse-low <value>` | low fuseへ1バイト書き込む |
 | `-wfh`, `--write-fuse-high <value>` | high fuseへ1バイト書き込む |
 | `-wfe`, `--write-fuse-extended <value>` | extended fuseへ1バイト書き込む |
@@ -145,14 +147,14 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 | `CMD_READ_SIGNATURE`（0x50） | 16進6文字 + `\r\n` | シグネチャ3バイトを読み出す |
 | `CMD_READ_FUSE`（0x51） | 16進2文字 + `\r\n` | 共有バッファの先頭で指定したヒューズを読み出す |
 | `CMD_READ_LOCK`（0x52） | 16進2文字 + `\r\n` | ロックビットを読み出す |
-| `CMD_READ_PAGE`（0x53） | なし | 予約済み。フラッシュ／EEPROMのページ読み出しは未実装 |
+| `CMD_READ_PAGE`（0x53） | 成功時 `1\r\n`、失敗時 `0\r\n` | 選択したATmega328PのFlashページを共有バッファへ読み出す |
 | `CMD_CHIP_ERASE`（0x60） | 成功時 `1\r\n`、失敗時 `0\r\n` | チップ消去を実行する |
 | `CMD_WRITE_FUSE`（0x61） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定したlow/high/extended fuseへ値を書き込む |
 | `CMD_WRITE_LOCK`（0x62） | 成功時 `1\r\n`、失敗時 `0\r\n` | 共有バッファで指定した値をロックビットへ書き込む |
 | `CMD_WRITE_PAGE`（0x63） | なし | 予約済み。フラッシュ／EEPROMのページ書き込みは未実装 |
 | `CMD_ADDR0` / `CMD_ADDR1`（0x70 / 0x71） | なし | 共有バッファの読み書き位置を設定する |
 | `CMD_DATA0` / `CMD_DATA1`（0x72 / 0x73） | なし | 共有バッファの現在位置へ1バイト書き込み、位置を1進める |
-| `CMD_PAGE0` / `CMD_PAGE1`（0x74 / 0x75） | なし | ページ番号を設定する（ページ処理自体は未実装） |
+| `CMD_PAGE0` / `CMD_PAGE1`（0x74 / 0x75） | なし | ページ番号を設定する |
 | `CMD_READ_16BYTES`（0x7F） | 16進32文字 + `\r\n` | 共有バッファの現在位置から16バイト読み出し、位置を16進める |
 | `CMD_LOAD_7BITS`（0x80～0xFF） | なし | 下位7ビットを一時データとしてロードする |
 
@@ -162,12 +164,14 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 ヒューズ書き込みでは共有バッファの0番に対象番号、1番に値を格納してから `CMD_WRITE_FUSE` を送ります。ロックビット書き込みでは0番に値を格納してから `CMD_WRITE_LOCK` を送ります。現在のファームウェアは値の設定済み状態を別途管理せず、共有バッファの内容をそのまま使用します。
 
+Flashページ読み出しでは `CMD_CLEAR` 後に `CMD_PAGE0` / `CMD_PAGE1` で0～255のページを指定し、`CMD_READ_PAGE` を送ります。成功すると128バイトが共有バッファへ格納されるため、バッファアドレスを0に設定し、`CMD_READ_16BYTES` を8回送って回収します。読み出し時はシグネチャ3バイトがATmega328Pの `1E 95 0F` と一致することも確認します。ページサイズ、ページ数、シグネチャは `common/target.h` で共有しています。
+
 実装済みのシグネチャ、ヒューズ、ロックビットの読み出し／書き込みとチップ消去は、毎回プログラミングモードに入り、処理後に抜けます。モードに入れなかった場合の応答は `0\r\n` です。
 プログラミングモードに入れたかどうかは、RDY/BSY が High になることと、シグネチャの先頭がメーカーコード 0x1E であることで判定しています。
 
 ## 制約と今後の課題
 
-- `CMD_DEBUG`、フラッシュとEEPROMの個別の読み書きは未実装です。`CMD_READ_PAGE`、`CMD_WRITE_PAGE`、`CMD_PAGE0`、`CMD_PAGE1` は将来用の枠だけがあります。
+- `CMD_DEBUG`、Flashページ書き込み、EEPROMの読み書きは未実装です。`CMD_WRITE_PAGE` は将来用の枠だけがあります。
 - 0x40未満でSTK500モードへ戻る仕様を維持するため、任意の8ビット値は `CMD_LOAD_7BITS` と `CMD_DATA0` / `CMD_DATA1` などを使って0x40以上のバイトへ符号化します。
 - プログラミングモードへは、VCC を常時供給したまま XTAL1 を 6 回トグルし、+12V を印加する方式で入ります。RSTDISBL がプログラムされたチップでは、ターゲットのプログラムが動いたままになり、モードに入れない可能性があります。対応するには VCC の切り替え回路と、より速い +12V のスイッチが必要です。
 

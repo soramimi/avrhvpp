@@ -2,6 +2,7 @@
 INCLUDEPATH += /usr/avr/include
 
 HEADERS += \
+	../../common/target.h \
     ../avrgpio.h \
     ../avrhvpp.h \
     ../avrpara.h \

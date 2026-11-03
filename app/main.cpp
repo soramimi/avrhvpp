@@ -11,8 +11,10 @@
 #include <cstring>
 #include <assert.h>
 #include <cerrno>
+#include <cctype>
 #include <cstdlib>
 #include "../common/commands.h"
+#include "../common/target.h"
 
 #ifdef _WIN32
 #else
@@ -197,8 +199,9 @@ struct Options {
 
 struct Operation {
 	Command command;
-	uint8_t data = 0;
+	uint16_t data = 0;
 	uint8_t value = 0;
+	std::string path;
 };
 
 bool parse_byte(char const *text, uint8_t *value)
@@ -210,6 +213,19 @@ bool parse_byte(char const *text, uint8_t *value)
 		return false;
 	}
 	*value = (uint8_t)v;
+	return true;
+}
+
+bool parse_page(char const *text, uint16_t *page)
+{
+	errno = 0;
+	char *end;
+	int base = text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 16 : 10;
+	unsigned long value = strtoul(text, &end, base);
+	if (errno || end == text || *end || value >= Target::FlashPageCount) {
+		return false;
+	}
+	*page = (uint16_t)value;
 	return true;
 }
 
@@ -250,7 +266,7 @@ bool avr_read_status(Operation const &op, Connection *conn)
 
 	std::vector<char> line;
 	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, op.data, CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)op.data, CMD_DATA0, CMD_DATA1);
 	write_command(conn, op.command);
 	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
 		fprintf(stderr, "no response\n");
@@ -281,7 +297,7 @@ bool avr_read_status(Operation const &op, Connection *conn)
 bool avr_write_fuse(Operation const &op, Connection *conn)
 {
 	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, op.data, CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)op.data, CMD_DATA0, CMD_DATA1);
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
 	write_command(conn, CMD_WRITE_FUSE);
 
@@ -336,6 +352,71 @@ bool avr_chip_erase(Connection *conn)
 	return false;
 }
 
+int hex_value(char c)
+{
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+bool avr_read_page(Operation const &op, Connection *conn)
+{
+	std::vector<char> line;
+	std::vector<uint8_t> data;
+	data.reserve(Target::FlashPageBytes);
+
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, (uint8_t)op.data, CMD_PAGE0, CMD_PAGE1);
+	write_command(conn, CMD_READ_PAGE);
+	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
+		fprintf(stderr, "no response\n");
+		return false;
+	}
+	if (!(line == "1")) {
+		fprintf(stderr, "failed to read flash page %u\n", (unsigned int)op.data);
+		return false;
+	}
+
+	write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
+	for (int block = 0; block < Target::FlashPageBytes / 16; block++) {
+		write_command(conn, CMD_READ_16BYTES);
+		if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
+			fprintf(stderr, "no response\n");
+			return false;
+		}
+		if (line.size() != 32) {
+			fprintf(stderr, "invalid page data\n");
+			return false;
+		}
+		for (int i = 0; i < 16; i++) {
+			int high = hex_value(line[i * 2]);
+			int low = hex_value(line[i * 2 + 1]);
+			if (high < 0 || low < 0) {
+				fprintf(stderr, "invalid page data\n");
+				return false;
+			}
+			data.push_back((uint8_t)((high << 4) | low));
+		}
+	}
+
+	FILE *fp = fopen(op.path.c_str(), "wb");
+	if (!fp) {
+		fprintf(stderr, "failed to open %s\n", op.path.c_str());
+		return false;
+	}
+	bool ok = fwrite(data.data(), 1, data.size(), fp) == data.size();
+	if (fclose(fp) != 0) {
+		ok = false;
+	}
+	if (!ok) {
+		fprintf(stderr, "failed to write %s\n", op.path.c_str());
+		return false;
+	}
+	printf("page %u read: %s\n", (unsigned int)op.data, op.path.c_str());
+	return true;
+}
+
 bool perform(Operation const &op, Connection *conn)
 {
 	if (!conn->enter_avrhvpp_mode()) {
@@ -379,6 +460,8 @@ bool perform(Operation const &op, Connection *conn)
 		return avr_write_lock(op, conn);
 	} else if (op.command == CMD_CHIP_ERASE) {
 		return avr_chip_erase(conn);
+	} else if (op.command == CMD_READ_PAGE) {
+		return avr_read_page(op, conn);
 	} else {
 		return avr_read_status(op, conn);
 	}
@@ -427,6 +510,18 @@ int main(int argc, char **argv)
 			operations.push_back({CMD_READ_FUSE, 2});
 		} else if (arg == "-rl" || arg == "--read-lock") {
 			operations.push_back({CMD_READ_LOCK});
+		} else if (arg == "--read-page") {
+			uint16_t page;
+			if (argi >= argc || !parse_page(argv[argi++], &page)) {
+				fprintf(stderr, "--read-page requires a page number from 0 to %u\n", (unsigned int)(Target::FlashPageCount - 1));
+				return 1;
+			}
+			if (argi >= argc) {
+				fprintf(stderr, "--read-page requires an output file\n");
+				return 1;
+			}
+			std::string path = argv[argi++];
+			operations.push_back({CMD_READ_PAGE, page, 0, path});
 		} else if (arg == "-wfl" || arg == "--write-fuse-low") {
 			uint8_t value;
 			if (argi >= argc || !parse_byte(argv[argi++], &value)) {

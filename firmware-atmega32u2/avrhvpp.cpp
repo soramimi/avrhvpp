@@ -3,8 +3,11 @@
 #include <string.h>
 
 #include "../common/commands.h"
+#include "../common/target.h"
 
 extern uint8_t flush_buffer[256];
+
+static_assert(Target::FlashPageBytes <= sizeof(flush_buffer), "flash page does not fit in buffer");
 
 AVRHVPP::AVRHVPP()
 {
@@ -176,6 +179,49 @@ void AVRHVPP::pulse_wr()
 	usleep(10);
 }
 
+void AVRHVPP::load_flash_command(uint8_t command)
+{
+	write_oe(1);
+	write_xa1(1);
+	write_xa0(0);
+	write_bs1(0);
+	write_bs2(0);
+	write_data_pins(command);
+	set_data_pin_mode(PinMode::Output);
+	pulse_xtal1();
+	set_data_pin_mode(PinMode::Input);
+	write_xa1(0);
+}
+
+void AVRHVPP::load_flash_address(uint8_t address, bool high)
+{
+	write_oe(1);
+	write_xa1(0);
+	write_xa0(0);
+	write_bs1(high);
+	write_bs2(0);
+	write_data_pins(address);
+	set_data_pin_mode(PinMode::Output);
+	pulse_xtal1();
+	set_data_pin_mode(PinMode::Input);
+}
+
+void AVRHVPP::read_flash_word(uint16_t address, uint8_t *low, uint8_t *high)
+{
+	load_flash_address((uint8_t)address, false);
+	set_data_pin_mode(PinMode::Input);
+	write_bs1(0);
+	write_oe(0);
+	usleep(1);
+	*low = read_data_pins();
+	write_bs1(1);
+	usleep(1);
+	*high = read_data_pins();
+	write_oe(1);
+	write_bs1(0);
+	usleep(1);
+}
+
 void AVRHVPP::set_command(uint8_t c)
 {
 	write_data_pins(true, c);
@@ -205,6 +251,28 @@ uint8_t AVRHVPP::read_signature(int addr)
 	set_low_address(addr);
 	usleep(1);
 	return read_data();
+}
+
+bool AVRHVPP::matches_target_signature()
+{
+	return read_signature(0) == Target::Signature0
+		&& read_signature(1) == Target::Signature1
+		&& read_signature(2) == Target::Signature2;
+}
+
+bool AVRHVPP::read_flash_page(uint16_t page, uint8_t *data, uint16_t size)
+{
+	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+		return false;
+	}
+
+	uint16_t address = Target::flash_word_address(page, 0);
+	load_flash_command(0x02);
+	load_flash_address((uint8_t)(address >> 8), true);
+	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+		read_flash_word(address + word, data + word * 2, data + word * 2 + 1);
+	}
+	return true;
 }
 
 void AVRHVPP::load_data_low(uint8_t c)
@@ -306,7 +374,8 @@ bool AVRHVPP::chip_erase()
 
 uint8_t data_7bits_ = 0;
 uint8_t addr_ = 0;
-uint8_t page_ = 0;
+uint16_t page_ = 0;
+bool page_valid_ = false;
 
 static inline uint8_t address()
 {
@@ -364,6 +433,8 @@ void AVRHVPP::process(uint8_t c)
 	} else if (c == CMD_CLEAR) {
 		data_7bits_ = 0;
 		addr_ = 0;
+		page_ = 0;
+		page_valid_ = false;
 		if (1) {
 			memset(flush_buffer, 0, sizeof(flush_buffer));
 		} else { // debug
@@ -389,8 +460,10 @@ void AVRHVPP::process(uint8_t c)
 		}
 	} else if (c == CMD_PAGE0) {
 		page_ = data_7bits_ & 0x7f;
+		page_valid_ = true;
 	} else if (c == CMD_PAGE1) {
 		page_ = (data_7bits_ & 0x7f) | 0x80;
+		page_valid_ = true;
 	} else if (c == CMD_READ_SIGNATURE) {
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -459,9 +532,24 @@ void AVRHVPP::process(uint8_t c)
 			}
 		}
 	} else if (c == CMD_READ_PAGE) {
-		uint8_t page  = page_;
-		uint8_t *data = flush_buffer;
-		// not implemented yet
+		uint16_t page = page_;
+		bool parameters_valid = page_valid_ && page < Target::FlashPageCount;
+		page_valid_ = false;
+		if (!parameters_valid) {
+			SendNACK();
+			return;
+		}
+		if (EnterProgrammingMode()) {
+			bool ok = matches_target_signature()
+				&& read_flash_page(page, flush_buffer, Target::FlashPageBytes);
+			set_programming_mode(false);
+			if (ok) {
+				addr_ = 0;
+				SendACK();
+			} else {
+				SendNACK();
+			}
+		}
 	} else if (c == CMD_WRITE_PAGE) {
 		uint8_t page  = page_;
 		uint8_t const *data = flush_buffer;
