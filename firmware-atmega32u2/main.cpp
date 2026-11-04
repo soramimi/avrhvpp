@@ -843,7 +843,7 @@ void reset_mode(Programmer mode)
 	icsp_mosi.read();
 	icsp_miso.read();
 	
-	memset(flush_buffer, 0, sizeof(flush_buffer));
+	avrhvpp.reset_protocol();
 	
 	state_avrhvpp = nullptr;
 	state_bitbang = nullptr;

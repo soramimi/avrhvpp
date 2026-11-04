@@ -2,6 +2,7 @@
 #define AVRHVPP_H
 
 #include "avrgpio.h"
+#include "../common/commands.h"
 
 
 enum PinMode {
@@ -23,7 +24,7 @@ private:
 	avr::GPIO<avr::C, 5> pin_wr_;
 	avr::GPIO<avr::C, 6> pin_bs1_;
 	avr::GPIO<avr::C, 7> pin_bs2_;
-	bool set_programming_mode(bool f);
+	ProtocolError set_programming_mode(bool f);
 	void write_data_pins(bool iscommand, uint8_t value);
 	bool read_rdybsy();
 	void write_oe(bool b);
@@ -45,23 +46,24 @@ private:
 	void load_flash_address(uint8_t address, bool high);
 	void load_flash_data(uint8_t data, bool high);
 	void read_flash_word(uint16_t address, uint8_t *low, uint8_t *high);
-	bool compare_flash_page(uint16_t page, uint8_t const *data, uint16_t size, bool *matches, bool *blank);
+	bool compare_flash_page(uint16_t address, uint8_t const *data, uint16_t size, bool *matches, bool *blank);
 private:
 	void write_byte(char c);
 	void write_string(const char *p);
+	void send_result(ProtocolError error);
 public:
 	AVRHVPP();
 	~AVRHVPP();
+	void reset_protocol();
 	void process(uint8_t c);
 	void set_command(uint8_t c);
 	void set_low_address(uint8_t c);
 	bool wait_ready();
 	uint8_t read_data();
 	uint8_t read_signature(int addr);
-	bool matches_target_signature();
-	bool read_flash_page(uint16_t page, uint8_t *data, uint16_t size);
-	bool write_flash_page(uint16_t page, uint8_t const *data, uint16_t size);
-	bool verify_flash_page(uint16_t page, uint8_t const *data, uint16_t size);
+	bool read_flash_page(uint16_t address, uint8_t *data, uint16_t size);
+	bool write_flash_page(uint16_t address, uint8_t const *data, uint16_t size);
+	bool verify_flash_page(uint16_t address, uint8_t const *data, uint16_t size);
 	void load_data_low(uint8_t c);
 
 	enum class Fuse {

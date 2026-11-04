@@ -77,8 +77,8 @@ writepage:
 	$(AVRHVPP) --write-page 0 /tmp/page0.bin
 
 readhex:
-	$(AVRHVPP) --read-hex /tmp/a.hex
+	$(AVRHVPP) --target atmega328p --read-hex /tmp/a.hex
 
 writehex:
-	$(AVRHVPP) --write-hex /tmp/a.hex
+	$(AVRHVPP) --target atmega328p --write-hex /tmp/a.hex
 

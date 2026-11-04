@@ -3,11 +3,6 @@
 
 #include <stdint.h>
 
-enum class TargetId : uint8_t {
-	ATmega8 = 1,
-	ATmega328P = 2,
-};
-
 enum TargetCapability : uint8_t {
 	CapabilityFlash = 1 << 0,
 	CapabilityFuseLow = 1 << 1,
@@ -18,7 +13,7 @@ enum TargetCapability : uint8_t {
 };
 
 struct TargetDefinition {
-	TargetId id;
+	char const *display_name;
 	uint8_t signature[3];
 	uint16_t flash_page_bytes;
 	uint16_t flash_page_count;
@@ -34,9 +29,9 @@ struct TargetDefinition {
 		return (uint32_t)flash_page_bytes * flash_page_count;
 	}
 
-	constexpr uint16_t flash_word_address(uint16_t page, uint16_t word) const
+	constexpr uint32_t flash_word_address(uint16_t page, uint16_t word) const
 	{
-		return page * flash_page_words() + word;
+		return (uint32_t)page * flash_page_words() + word;
 	}
 
 	constexpr bool supports(TargetCapability capability) const
@@ -53,7 +48,7 @@ struct TargetDefinition {
 };
 
 constexpr TargetDefinition TargetATmega8 = {
-	TargetId::ATmega8,
+	"ATmega8",
 	{0x1e, 0x93, 0x07},
 	64,
 	128,
@@ -65,7 +60,7 @@ constexpr TargetDefinition TargetATmega8 = {
 };
 
 constexpr TargetDefinition TargetATmega328P = {
-	TargetId::ATmega328P,
+	"ATmega328P",
 	{0x1e, 0x95, 0x0f},
 	128,
 	256,
@@ -76,17 +71,6 @@ constexpr TargetDefinition TargetATmega328P = {
 		| CapabilityLockBits
 		| CapabilityChipErase,
 };
-
-inline TargetDefinition const *find_target(TargetId id)
-{
-	if (id == TargetId::ATmega8) {
-		return &TargetATmega8;
-	}
-	if (id == TargetId::ATmega328P) {
-		return &TargetATmega328P;
-	}
-	return 0;
-}
 
 inline TargetDefinition const *find_target_by_signature(
 	uint8_t signature0,

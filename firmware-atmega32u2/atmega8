@@ -6,8 +6,8 @@ test:
 	$(AVRHVPP) -rs -rfl -rfh -rfe
 
 readhex:
-	$(AVRHVPP) --read-hex /tmp/a.hex
+	$(AVRHVPP) -t atmega8 --read-hex /tmp/a.hex
 
 writehex:
-	$(AVRHVPP) --write-hex /tmp/a.hex
+	$(AVRHVPP) -t atmega8 --write-hex /tmp/a.hex
 

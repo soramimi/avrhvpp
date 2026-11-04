@@ -5,11 +5,10 @@
 #include <avr/pgmspace.h>
 
 #include "../common/commands.h"
-#include "../common/target.h"
 
 extern uint8_t flush_buffer[256];
 
-static_assert(TargetATmega328P.flash_page_bytes <= sizeof(flush_buffer), "flash page does not fit in buffer");
+static_assert(FlashBufferBytes == sizeof(flush_buffer), "invalid shared buffer size");
 
 AVRHVPP::AVRHVPP()
 {
@@ -32,7 +31,7 @@ AVRHVPP::~AVRHVPP()
 	set_programming_mode(false);
 }
 
-bool AVRHVPP::set_programming_mode(bool f)
+ProtocolError AVRHVPP::set_programming_mode(bool f)
 {
 	if (f) {
 		write_oe(1);
@@ -54,11 +53,11 @@ bool AVRHVPP::set_programming_mode(bool f)
 
 		write_reset12v(1);
 		msleep(1); // datasheet: wait at least 300us before giving commands
-		if (!wait_ready()) return false;
+		if (!wait_ready()) return ProtocolError::ReadyTimeout;
 
 		// RDY/BSY may float high while not in programming mode,
 		// so confirm by the manufacturer code (0x1E = Atmel/Microchip)
-		return read_signature(0) == 0x1e;
+		return read_signature(0) == 0x1e ? ProtocolError::None : ProtocolError::ProgrammingMode;
 	} else {
 		write_reset12v(0);
 		pin_rdybsy_.read();
@@ -73,7 +72,7 @@ bool AVRHVPP::set_programming_mode(bool f)
 		set_data_pin_mode(PinMode::Input);
 		msleep(1);
 		pin_reset12v_.write(0);
-		return true;
+		return ProtocolError::None;
 	}
 }
 
@@ -278,41 +277,37 @@ uint8_t AVRHVPP::read_signature(int addr)
 	return read_data();
 }
 
-bool AVRHVPP::matches_target_signature()
+bool AVRHVPP::read_flash_page(uint16_t address, uint8_t *data, uint16_t size)
 {
-	return TargetATmega328P.matches_signature(
-		read_signature(0),
-		read_signature(1),
-		read_signature(2));
-}
-
-bool AVRHVPP::read_flash_page(uint16_t page, uint8_t *data, uint16_t size)
-{
-	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
+	if (!FlashParameters{address, size}.valid()) {
 		return false;
 	}
 
-	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x02);
 	load_flash_address((uint8_t)(address >> 8), true);
-	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
+	for (uint16_t word = 0; word < size / 2; word++) {
+		if (word && (uint8_t)(address + word) == 0) {
+			load_flash_address((uint8_t)((address + word) >> 8), true);
+		}
 		read_flash_word(address + word, data + word * 2, data + word * 2 + 1);
 	}
 	return true;
 }
 
-bool AVRHVPP::compare_flash_page(uint16_t page, uint8_t const *data, uint16_t size, bool *matches, bool *blank)
+bool AVRHVPP::compare_flash_page(uint16_t address, uint8_t const *data, uint16_t size, bool *matches, bool *blank)
 {
-	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
+	if (!FlashParameters{address, size}.valid()) {
 		return false;
 	}
 
 	*matches = true;
 	*blank = true;
-	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x02);
 	load_flash_address((uint8_t)(address >> 8), true);
-	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
+	for (uint16_t word = 0; word < size / 2; word++) {
+		if (word && (uint8_t)(address + word) == 0) {
+			load_flash_address((uint8_t)((address + word) >> 8), true);
+		}
 		uint8_t low;
 		uint8_t high;
 		read_flash_word(address + word, &low, &high);
@@ -326,15 +321,14 @@ bool AVRHVPP::compare_flash_page(uint16_t page, uint8_t const *data, uint16_t si
 	return true;
 }
 
-bool AVRHVPP::write_flash_page(uint16_t page, uint8_t const *data, uint16_t size)
+bool AVRHVPP::write_flash_page(uint16_t address, uint8_t const *data, uint16_t size)
 {
-	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
+	if (!FlashParameters{address, size}.valid()) {
 		return false;
 	}
 
-	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x10);
-	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
+	for (uint16_t word = 0; word < size / 2; word++) {
 		load_flash_address((uint8_t)(address + word), false);
 		load_flash_data(data[word * 2], false);
 		load_flash_data(data[word * 2 + 1], true);
@@ -342,6 +336,7 @@ bool AVRHVPP::write_flash_page(uint16_t page, uint8_t const *data, uint16_t size
 		pulse_pagel();
 	}
 	load_flash_address((uint8_t)(address >> 8), true);
+	write_bs1(0);
 	pulse_wr();
 	if (!wait_ready()) {
 		return false;
@@ -350,11 +345,11 @@ bool AVRHVPP::write_flash_page(uint16_t page, uint8_t const *data, uint16_t size
 	return true;
 }
 
-bool AVRHVPP::verify_flash_page(uint16_t page, uint8_t const *data, uint16_t size)
+bool AVRHVPP::verify_flash_page(uint16_t address, uint8_t const *data, uint16_t size)
 {
 	bool matches;
 	bool blank;
-	return compare_flash_page(page, data, size, &matches, &blank) && matches;
+	return compare_flash_page(address, data, size, &matches, &blank) && matches;
 }
 
 void AVRHVPP::load_data_low(uint8_t c)
@@ -455,10 +450,10 @@ bool AVRHVPP::chip_erase()
 }
 
 uint8_t data_7bits_ = 0;
-uint8_t addr_ = 0;
+uint16_t addr_ = 0;
 
-uint16_t page_num_ = 0;
-bool page_num_valid_ = false;
+FlashParameters flash_parameters_ = {};
+bool flash_parameters_valid_ = false;
 
 uint16_t buffer_data_count_ = 0;
 bool buffer_data_valid_ = false;
@@ -480,7 +475,19 @@ void write_hex(char *p, uint8_t c)
 	p[1] = pgm_read_byte(hex + (c & 15));
 }
 
-void rewind() // don't clear page num
+void AVRHVPP::send_result(ProtocolError error)
+{
+	set_programming_mode(false);
+	if (error == ProtocolError::None) {
+		write_string("1\r\n");
+	} else {
+		char response[] = "E00\r\n";
+		write_hex(response + 1, (uint8_t)error);
+		write_string(response);
+	}
+}
+
+void rewind() // don't clear flash parameters
 {
 	addr_ = 0;
 	buffer_data_count_ = 0;
@@ -491,24 +498,23 @@ void rewind() // don't clear page num
 void cmd_clear()
 {
 	data_7bits_ = 0;
-	page_num_ = 0;
-	page_num_valid_ = false;
+	flash_parameters_ = {};
+	flash_parameters_valid_ = false;
 	rewind();
+}
+
+void AVRHVPP::reset_protocol()
+{
+	set_programming_mode(false);
+	cmd_clear();
 }
 
 void AVRHVPP::process(uint8_t c)
 {
-	auto SendACK = [this]() {
-		write_string("1\r\n");
-	};
-	auto SendNACK = [this]() {
-		write_string("0\r\n");
-	};
-
 	auto EnterProgrammingMode = [&]() {
-		if (!set_programming_mode(true)) {
-			set_programming_mode(false);
-			SendNACK();
+		ProtocolError error = set_programming_mode(true);
+		if (error != ProtocolError::None) {
+			send_result(error);
 			return false;
 		}
 		return true;
@@ -523,6 +529,8 @@ void AVRHVPP::process(uint8_t c)
 			}
 			flush_buffer[addr_] = c;
 			addr_++;
+		} else {
+			buffer_data_valid_ = false;
 		}
 	};
 
@@ -556,14 +564,17 @@ void AVRHVPP::process(uint8_t c)
 		AppendFlashBuffer(data_7bits_ & 0x7f);
 	} else if (c == CMD_DATA1) {
 		AppendFlashBuffer((data_7bits_ & 0x7f) | 0x80);
-	} else if (c == CMD_LATCH_PAGE_NUM) {
-		page_num_valid_ = false;
-		if (buffer_data_valid_ && buffer_data_count_ == 2) {
-			page_num_ = (uint16_t)flush_buffer[0]
+	} else if (c == CMD_LATCH_FLASH_PARAMS) {
+		flash_parameters_valid_ = false;
+		if (buffer_data_valid_ && buffer_data_count_ == FlashParameterBytes) {
+			flash_parameters_.word_address = (uint16_t)flush_buffer[0]
 				| ((uint16_t)flush_buffer[1] << 8);
-			page_num_valid_ = true;
+			flash_parameters_.byte_count = (uint16_t)flush_buffer[2]
+				| ((uint16_t)flush_buffer[3] << 8);
+			flash_parameters_valid_ = flash_parameters_.valid();
 		}
 		rewind();
+		send_result(flash_parameters_valid_ ? ProtocolError::None : ProtocolError::InvalidArgument);
 	} else if (c == CMD_READ_SIGNATURE) {
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -578,6 +589,10 @@ void AVRHVPP::process(uint8_t c)
 		}
 	} else if (c == CMD_READ_FUSE) {
 		uint8_t addr = address();
+		if (!buffer_data_valid_ || buffer_data_count_ != 1 || addr > (uint8_t)Fuse::Lock) {
+			send_result(ProtocolError::InvalidArgument);
+			return;
+		}
 		Fuse fuse = (Fuse)addr;
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -591,14 +606,13 @@ void AVRHVPP::process(uint8_t c)
 	} else if (c == CMD_WRITE_FUSE) {
 		uint8_t addr = address();
 		uint8_t value = writedata();
+		if (!buffer_data_valid_ || buffer_data_count_ != 2 || addr > (uint8_t)Fuse::Lock) {
+			send_result(ProtocolError::InvalidArgument);
+			return;
+		}
 		if (EnterProgrammingMode()) {
 			bool ok = write_fuse((Fuse)addr, value);
-			set_programming_mode(false);
-			if (ok) {
-				SendACK();
-			} else {
-				SendNACK();
-			}
+			send_result(ok ? ProtocolError::None : ProtocolError::ReadyTimeout);
 		}
 	} else if (c == CMD_READ_LOCK) {
 		if (EnterProgrammingMode()) {
@@ -611,85 +625,75 @@ void AVRHVPP::process(uint8_t c)
 			write_string(tmp);
 		}
 	} else if (c == CMD_WRITE_LOCK) {
-		uint8_t value = writedata();
+		uint8_t value = flush_buffer[0];
+		if (!buffer_data_valid_ || buffer_data_count_ != 1) {
+			send_result(ProtocolError::InvalidArgument);
+			return;
+		}
 		if (EnterProgrammingMode()) {
 			bool ok = write_fuse(Fuse::Lock, value);
-			set_programming_mode(false);
-			if (ok) {
-				SendACK();
-			} else {
-				SendNACK();
-			}
+			send_result(ok ? ProtocolError::None : ProtocolError::ReadyTimeout);
 		}
 	} else if (c == CMD_CHIP_ERASE) {
 		if (EnterProgrammingMode()) {
 			bool ok = chip_erase();
-			set_programming_mode(false);
-			if (ok) {
-				SendACK();
-			} else {
-				SendNACK();
-			}
+			send_result(ok ? ProtocolError::None : ProtocolError::ReadyTimeout);
 		}
 	} else if (c == CMD_READ_PAGE) {
-		uint16_t page = page_num_;
-		bool parameters_valid = page_num_valid_ && page < TargetATmega328P.flash_page_count;
-		page_num_valid_ = false;
+		FlashParameters parameters = flash_parameters_;
+		bool parameters_valid = flash_parameters_valid_ && parameters.valid();
+		flash_parameters_valid_ = false;
+		buffer_data_valid_ = false;
 		if (!parameters_valid) {
-			SendNACK();
+			send_result(ProtocolError::InvalidArgument);
 			return;
 		}
 		if (EnterProgrammingMode()) {
-			bool ok = matches_target_signature()
-				&& read_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes);
-			set_programming_mode(false);
+			bool ok = read_flash_page(parameters.word_address, flush_buffer, parameters.byte_count);
 			if (ok) {
 				addr_ = 0;
-				SendACK();
+				send_result(ProtocolError::None);
 			} else {
-				SendNACK();
+				send_result(ProtocolError::InvalidArgument);
 			}
 		}
 	} else if (c == CMD_WRITE_PAGE) {
-		uint16_t page = page_num_;
-		bool parameters_valid = page_num_valid_
-			&& page < TargetATmega328P.flash_page_count
+		FlashParameters parameters = flash_parameters_;
+		bool parameters_valid = flash_parameters_valid_ && parameters.valid()
 			&& buffer_data_valid_
-			&& buffer_data_count_ == TargetATmega328P.flash_page_bytes;
-		page_num_valid_ = false;
+			&& buffer_data_count_ == parameters.byte_count;
+		flash_parameters_valid_ = false;
 		buffer_data_valid_ = false;
 		buffer_data_count_ = 0;
 		if (!parameters_valid) {
-			SendNACK();
+			send_result(ProtocolError::InvalidArgument);
 			return;
 		}
 		if (EnterProgrammingMode()) {
 			bool matches = false;
 			bool blank = false;
-			bool ok = matches_target_signature()
-				&& compare_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes, &matches, &blank);
-			if (ok && !matches) {
-				ok = blank
-					&& write_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes)
-					&& verify_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes);
+			ProtocolError error = ProtocolError::None;
+			if (!compare_flash_page(parameters.word_address, flush_buffer, parameters.byte_count, &matches, &blank)) {
+				error = ProtocolError::InvalidArgument;
+			} else if (!matches) {
+				if (!blank) {
+					error = ProtocolError::NotBlank;
+				} else if (!write_flash_page(parameters.word_address, flush_buffer, parameters.byte_count)) {
+					error = ProtocolError::ReadyTimeout;
+				} else if (!verify_flash_page(parameters.word_address, flush_buffer, parameters.byte_count)) {
+					error = ProtocolError::VerifyMismatch;
+				}
 			}
-			set_programming_mode(false);
-			if (ok) {
-				SendACK();
-			} else {
-				SendNACK();
-			}
+			send_result(error);
 		}
 	} else if (c == CMD_READ_16BYTES) {
+		if (addr_ > sizeof(flush_buffer) - 16) {
+			send_result(ProtocolError::InvalidArgument);
+			return;
+		}
 		char tmp[35];
 		for (uint8_t i = 0; i < 16; i++) {
-			if (addr_ < sizeof(flush_buffer)) {
-				write_hex(tmp + i * 2, flush_buffer[addr_]);
-				addr_++;
-			} else {
-				tmp[i * 2 + 0] = '-';
-				tmp[i * 2 + 1] = '-';
-			}
+			write_hex(tmp + i * 2, flush_buffer[addr_++]);
 		}
 		tmp[32] = '\r';
 		tmp[33] = '\n';
@@ -697,5 +701,7 @@ void AVRHVPP::process(uint8_t c)
 		write_string(tmp);
 	} else if (c >= CMD_LOAD_7BITS) {
 		data_7bits_ = c & 0x7f;
+	} else {
+		send_result(ProtocolError::UnknownCommand);
 	}
 }

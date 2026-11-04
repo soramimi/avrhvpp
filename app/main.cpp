@@ -1,5 +1,6 @@
 
 #include "serial.h"
+#include "target.h"
 #include <chrono>
 #include <cstdio>
 #include <deque>
@@ -8,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <cstring>
 #include <assert.h>
@@ -15,7 +17,6 @@
 #include <cctype>
 #include <cstdlib>
 #include "../common/commands.h"
-#include "../common/target.h"
 
 #ifdef _WIN32
 #else
@@ -197,6 +198,7 @@ public:
 
 struct Options {
 	Serial::Option serial_options;
+	std::unique_ptr<Target> target;
 	bool chip_erase_before_write_hex = true;
 };
 
@@ -208,6 +210,7 @@ struct Operation {
 	std::vector<uint8_t> bytes;
 	std::vector<uint8_t> page_mask;
 	bool chip_erase = false;
+	Target const *target = nullptr;
 };
 
 bool parse_byte(char const *text, uint8_t *value)
@@ -222,27 +225,39 @@ bool parse_byte(char const *text, uint8_t *value)
 	return true;
 }
 
-bool parse_page(char const *text, uint16_t *page)
+bool parse_page(char const *text, Target const &target, uint16_t *page)
 {
 	errno = 0;
 	char *end;
 	int base = text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 16 : 10;
 	unsigned long value = strtoul(text, &end, base);
-	if (errno || end == text || *end || value >= TargetATmega328P.flash_page_count) {
+	if (errno || end == text || *end || value >= target.definition().flash_page_count) {
 		return false;
 	}
 	*page = (uint16_t)value;
 	return true;
 }
 
-bool read_page_file(char const *path, std::vector<uint8_t> *data)
+bool make_flash_parameters(uint16_t page, Target const &target, FlashParameters *parameters)
+{
+	TargetDefinition const &definition = target.definition();
+	uint32_t address = definition.flash_word_address(page, 0);
+	*parameters = {(uint16_t)address, definition.flash_page_bytes};
+	if (page >= definition.flash_page_count || address > 0xffffUL || !parameters->valid()) {
+		fprintf(stderr, "invalid flash page or size for %.*s\n", (int)target.name().size(), target.name().data());
+		return false;
+	}
+	return true;
+}
+
+bool read_page_file(char const *path, Target const &target, std::vector<uint8_t> *data)
 {
 	FILE *fp = fopen(path, "rb");
 	if (!fp) {
 		fprintf(stderr, "failed to open %s\n", path);
 		return false;
 	}
-	data->resize(TargetATmega328P.flash_page_bytes + 1);
+	data->resize(target.definition().flash_page_bytes + 1);
 	size_t size = fread(data->data(), 1, data->size(), fp);
 	bool ok = !ferror(fp);
 	if (fclose(fp) != 0) {
@@ -252,11 +267,11 @@ bool read_page_file(char const *path, std::vector<uint8_t> *data)
 		fprintf(stderr, "failed to read %s\n", path);
 		return false;
 	}
-	if (size != TargetATmega328P.flash_page_bytes) {
-		fprintf(stderr, "%s must be exactly %u bytes\n", path, (unsigned int)TargetATmega328P.flash_page_bytes);
+	if (size != target.definition().flash_page_bytes) {
+		fprintf(stderr, "%s must be exactly %u bytes for %.*s\n", path, (unsigned int)target.definition().flash_page_bytes, (int)target.name().size(), target.name().data());
 		return false;
 	}
-	data->resize(TargetATmega328P.flash_page_bytes);
+	data->resize(target.definition().flash_page_bytes);
 	return true;
 }
 
@@ -292,7 +307,7 @@ bool parse_hex_record(std::string const &line, std::vector<uint8_t> *record)
 	return sum == 0;
 }
 
-bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<uint8_t> *page_mask)
+bool read_hex_file(char const *path, Target const &target, std::vector<uint8_t> *image, std::vector<uint8_t> *page_mask)
 {
 	std::ifstream input(path, std::ios::binary);
 	if (!input) {
@@ -300,9 +315,9 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 		return false;
 	}
 
-	image->assign(TargetATmega328P.flash_bytes(), 0xff);
-	std::vector<bool> assigned(TargetATmega328P.flash_bytes(), false);
-	page_mask->assign(TargetATmega328P.flash_page_count, 0);
+	image->assign(target.definition().flash_bytes(), 0xff);
+	std::vector<bool> assigned(target.definition().flash_bytes(), false);
+	page_mask->assign(target.definition().flash_page_count, 0);
 	std::string line;
 	std::vector<uint8_t> record;
 	uint32_t base_address = 0;
@@ -330,8 +345,8 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 		uint8_t type = record[3];
 		if (type == 0x00) {
 			uint64_t absolute = (uint64_t)base_address + address;
-			if (absolute + size > TargetATmega328P.flash_bytes()) {
-				fprintf(stderr, "%s:%u: address is outside ATmega328P flash\n", path, line_number);
+			if (absolute + size > target.definition().flash_bytes()) {
+				fprintf(stderr, "%s:%u: address is outside %.*s flash\n", path, line_number, (int)target.name().size(), target.name().data());
 				return false;
 			}
 			for (uint16_t i = 0; i < size; i++) {
@@ -343,7 +358,7 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 				}
 				image->at(offset) = value;
 				assigned[offset] = true;
-				page_mask->at(offset / TargetATmega328P.flash_page_bytes) = 1;
+				page_mask->at(offset / target.definition().flash_page_bytes) = 1;
 			}
 		} else if (type == 0x01) {
 			if (size != 0 || address != 0) {
@@ -454,11 +469,127 @@ void write_encoded_byte(Connection *conn, uint8_t value, uint8_t command0, uint8
 	write_command(conn, (value & 0x80) ? command1 : command0);
 }
 
-void write_page_number(uint16_t page, Connection *conn)
+bool decode_response(std::vector<char> const &line, size_t expected_bytes, std::vector<uint8_t> *data, ProtocolError *error)
 {
-	write_encoded_byte(conn, (uint8_t)page, CMD_DATA0, CMD_DATA1);
-	write_encoded_byte(conn, (uint8_t)(page >> 8), CMD_DATA0, CMD_DATA1);
-	write_command(conn, CMD_LATCH_PAGE_NUM);
+	data->clear();
+	*error = ProtocolError::None;
+	if (line.size() == 3 && line[0] == 'E') {
+		int high = hex_value(line[1]);
+		int low = hex_value(line[2]);
+		if (high < 0 || low < 0 || (high == 0 && low == 0)) return false;
+		*error = (ProtocolError)((high << 4) | low);
+		return true;
+	}
+	if (expected_bytes == 0) return line == "1";
+	if (line.size() != expected_bytes * 2) return false;
+	for (size_t i = 0; i < expected_bytes; i++) {
+		int high = hex_value(line[i * 2]);
+		int low = hex_value(line[i * 2 + 1]);
+		if (high < 0 || low < 0) {
+			data->clear();
+			return false;
+		}
+		data->push_back((uint8_t)((high << 4) | low));
+	}
+	return true;
+}
+
+char const *protocol_error_message(ProtocolError error)
+{
+	switch (error) {
+	case ProtocolError::InvalidArgument: return "invalid arguments or buffer length";
+	case ProtocolError::ProgrammingMode: return "failed to enter programming mode";
+	case ProtocolError::ReadyTimeout: return "RDY/BSY timeout";
+	case ProtocolError::VerifyMismatch: return "read-back verification failed";
+	case ProtocolError::NotBlank: return "flash is not blank and does not match the input";
+	case ProtocolError::UnknownCommand: return "unknown command";
+	default: return "unknown device error";
+	}
+}
+
+bool read_response(Connection *conn, size_t expected_bytes, std::vector<uint8_t> *data, int timeout)
+{
+	std::vector<char> line;
+	if (!conn->read_line(&line, timeout)) {
+		fprintf(stderr, "no response\n");
+		return false;
+	}
+	ProtocolError error;
+	if (!decode_response(line, expected_bytes, data, &error)) {
+		fprintf(stderr, "invalid response\n");
+		return false;
+	}
+	if (error != ProtocolError::None) {
+		fprintf(stderr, "device error E%02X: %s\n", (unsigned int)error, protocol_error_message(error));
+		return false;
+	}
+	return true;
+}
+
+bool read_ack(Connection *conn, int timeout)
+{
+	std::vector<uint8_t> data;
+	return read_response(conn, 0, &data, timeout);
+}
+
+bool write_flash_parameters(uint16_t address, uint16_t size, Connection *conn)
+{
+	FlashParameters parameters = {address, size};
+	if (!parameters.valid()) {
+		fprintf(stderr, "invalid flash parameters\n");
+		return false;
+	}
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, (uint8_t)address, CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)(address >> 8), CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)size, CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)(size >> 8), CMD_DATA0, CMD_DATA1);
+	write_command(conn, CMD_LATCH_FLASH_PARAMS);
+	return read_ack(conn, COMMAND_TIMEOUT_MS);
+}
+
+bool avr_fetch_status(Command command, uint8_t address, size_t bytes, std::vector<uint8_t> *data, Connection *conn)
+{
+	write_command(conn, CMD_CLEAR);
+	write_encoded_byte(conn, address, CMD_DATA0, CMD_DATA1);
+	write_command(conn, command);
+	return read_response(conn, bytes, data, COMMAND_TIMEOUT_MS);
+}
+
+bool avr_detect(Connection *conn)
+{
+	std::vector<uint8_t> signature;
+	if (!avr_fetch_status(CMD_READ_SIGNATURE, 0, 3, &signature, conn)) return false;
+	printf("signature: 0x%02x, 0x%02x, 0x%02x\n", signature[0], signature[1], signature[2]);
+	TargetDefinition const *target = find_target_by_signature(signature[0], signature[1], signature[2]);
+	if (!target) {
+		puts("chip: unknown");
+		fprintf(stderr, "unsupported target signature\n");
+		return false;
+	}
+	printf("chip: %s\n", target->display_name);
+	printf("page size: %u bytes\n", (unsigned int)target->flash_page_bytes);
+	printf("page count: %u\n", (unsigned int)target->flash_page_count);
+	printf("flash size: %lu bytes\n", (unsigned long)target->flash_bytes());
+	struct Field {
+		TargetCapability capability;
+		char const *label;
+		Command command;
+		uint8_t address;
+	};
+	static const Field fields[] = {
+		{CapabilityFuseLow, "fuse lo", CMD_READ_FUSE, 0},
+		{CapabilityFuseHigh, "fuse hi", CMD_READ_FUSE, 1},
+		{CapabilityFuseExtended, "fuse ex", CMD_READ_FUSE, 2},
+		{CapabilityLockBits, "lock bits", CMD_READ_LOCK, 0},
+	};
+	for (Field const &field : fields) {
+		if (!target->supports(field.capability)) continue;
+		std::vector<uint8_t> data;
+		if (!avr_fetch_status(field.command, field.address, 1, &data, conn)) return false;
+		printf("%s: 0x%02x\n", field.label, data[0]);
+	}
+	return true;
 }
 
 bool avr_read_status(Operation const &op, Connection *conn)
@@ -485,30 +616,18 @@ bool avr_read_status(Operation const &op, Connection *conn)
 		return false;
 	}
 
-	std::vector<char> line;
-	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, (uint8_t)op.data, CMD_DATA0, CMD_DATA1);
-	write_command(conn, op.command);
-	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
-		return false;
-	}
-	if (line.size() != (size_t)bytes * 2) {
-		fprintf(stderr, "failed to enter programming mode\n");
+	std::vector<uint8_t> data;
+	if (!avr_fetch_status(op.command, (uint8_t)op.data, bytes, &data, conn)) {
 		return false;
 	}
 	std::string text;
 	int n = bytes;
 	for (int i = 0; i < n; i++) {
 		char tmp[10];
-		tmp[0] = line[i * 2 + 0];
-		tmp[1] = line[i * 2 + 1];
-		tmp[2] = 0;
-		int v = (int)strtol(tmp, nullptr, 16);
 		if (i > 0) {
 			text += ", ";
 		}
-		sprintf(tmp, "0x%02x", v);
+		sprintf(tmp, "0x%02x", data[i]);
 		text += tmp;
 	}
 	puts(text.c_str());
@@ -522,12 +641,7 @@ bool avr_write_fuse(Operation const &op, Connection *conn)
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
 	write_command(conn, CMD_WRITE_FUSE);
 
-	std::vector<char> line;
-	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
-		return false;
-	}
-	if (line == "1") {
+	if (read_ack(conn, COMMAND_TIMEOUT_MS)) {
 		printf("fuse written: 0x%02x\n", op.value);
 		return true;
 	} else {
@@ -542,12 +656,7 @@ bool avr_write_lock(Operation const &op, Connection *conn)
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
 	write_command(conn, CMD_WRITE_LOCK);
 
-	std::vector<char> line;
-	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
-		return false;
-	}
-	if (line == "1") {
+	if (read_ack(conn, COMMAND_TIMEOUT_MS)) {
 		printf("lock bits written: 0x%02x\n", op.value);
 		return true;
 	} else {
@@ -560,12 +669,7 @@ bool avr_chip_erase(Connection *conn)
 {
 	write_command(conn, CMD_CHIP_ERASE);
 
-	std::vector<char> line;
-	if (!conn->read_line(&line, PAGE_WRITE_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
-		return false;
-	}
-	if (line == "1") {
+	if (read_ack(conn, PAGE_WRITE_TIMEOUT_MS)) {
 		puts("chip erased");
 		return true;
 	}
@@ -573,52 +677,44 @@ bool avr_chip_erase(Connection *conn)
 	return false;
 }
 
-bool avr_fetch_page(uint16_t page, std::vector<uint8_t> *data, Connection *conn)
+bool avr_fetch_page(uint16_t page, Target const &target, std::vector<uint8_t> *data, Connection *conn)
 {
-	std::vector<char> line;
 	data->clear();
-	data->reserve(TargetATmega328P.flash_page_bytes);
+	data->reserve(target.definition().flash_page_bytes);
 
-	write_command(conn, CMD_CLEAR);
-	write_page_number(page, conn);
-	write_command(conn, CMD_READ_PAGE);
-	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
+	FlashParameters parameters;
+	if (!make_flash_parameters(page, target, &parameters)
+		|| !write_flash_parameters(parameters.word_address, parameters.byte_count, conn)) {
 		return false;
 	}
-	if (!(line == "1")) {
+	write_command(conn, CMD_READ_PAGE);
+	if (!read_ack(conn, COMMAND_TIMEOUT_MS)) {
 		fprintf(stderr, "failed to read flash page %u\n", (unsigned int)page);
 		return false;
 	}
 
 	write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
-	for (int block = 0; block < TargetATmega328P.flash_page_bytes / 16; block++) {
+	for (uint16_t offset = 0; offset < parameters.byte_count; offset += 16) {
 		write_command(conn, CMD_READ_16BYTES);
-		if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-			fprintf(stderr, "no response\n");
+		std::vector<uint8_t> bytes;
+		if (!read_response(conn, 16, &bytes, COMMAND_TIMEOUT_MS)) {
 			return false;
 		}
-		if (line.size() != 32) {
-			fprintf(stderr, "invalid page data\n");
-			return false;
-		}
-		for (int i = 0; i < 16; i++) {
-			int high = hex_value(line[i * 2]);
-			int low = hex_value(line[i * 2 + 1]);
-			if (high < 0 || low < 0) {
-				fprintf(stderr, "invalid page data\n");
-				return false;
-			}
-			data->push_back((uint8_t)((high << 4) | low));
-		}
+		uint16_t remaining = parameters.byte_count - offset;
+		data->insert(data->end(), bytes.begin(), bytes.begin() + (remaining < 16 ? remaining : 16));
 	}
 	return true;
 }
 
 bool avr_read_page(Operation const &op, Connection *conn)
 {
+	if (!op.target) {
+		fprintf(stderr, "flash operations require --target\n");
+		return false;
+	}
+	Target const &target = *op.target;
 	std::vector<uint8_t> data;
-	if (!avr_fetch_page(op.data, &data, conn)) {
+	if (!avr_fetch_page(op.data, target, &data, conn)) {
 		return false;
 	}
 
@@ -641,13 +737,18 @@ bool avr_read_page(Operation const &op, Connection *conn)
 
 bool avr_read_hex(Operation const &op, Connection *conn)
 {
-	std::vector<uint8_t> image(TargetATmega328P.flash_bytes());
-	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
+	if (!op.target) {
+		fprintf(stderr, "flash operations require --target\n");
+		return false;
+	}
+	Target const &target = *op.target;
+	std::vector<uint8_t> image(target.definition().flash_bytes());
+	for (uint16_t page = 0; page < target.definition().flash_page_count; page++) {
 		std::vector<uint8_t> data;
-		if (!avr_fetch_page(page, &data, conn)) {
+		if (!avr_fetch_page(page, target, &data, conn)) {
 			return false;
 		}
-		memcpy(&image[(size_t)page * TargetATmega328P.flash_page_bytes], data.data(), TargetATmega328P.flash_page_bytes);
+		memcpy(&image[(size_t)page * target.definition().flash_page_bytes], data.data(), target.definition().flash_page_bytes);
 	}
 
 	unsigned int records;
@@ -660,19 +761,26 @@ bool avr_read_hex(Operation const &op, Connection *conn)
 
 bool avr_write_page(Operation const &op, Connection *conn)
 {
-	write_command(conn, CMD_CLEAR);
-	write_page_number((uint16_t)op.data, conn);
+	if (!op.target) {
+		fprintf(stderr, "flash operations require --target\n");
+		return false;
+	}
+	Target const &target = *op.target;
+	if (op.bytes.size() != target.definition().flash_page_bytes) {
+		fprintf(stderr, "invalid flash page data length\n");
+		return false;
+	}
+	FlashParameters parameters;
+	if (!make_flash_parameters(op.data, target, &parameters)
+		|| !write_flash_parameters(parameters.word_address, parameters.byte_count, conn)) {
+		return false;
+	}
 	for (uint8_t data : op.bytes) {
 		write_encoded_byte(conn, data, CMD_DATA0, CMD_DATA1);
 	}
 	write_command(conn, CMD_WRITE_PAGE);
 
-	std::vector<char> line;
-	if (!conn->read_line(&line, PAGE_WRITE_TIMEOUT_MS)) {
-		fprintf(stderr, "no response\n");
-		return false;
-	}
-	if (line == "1") {
+	if (read_ack(conn, PAGE_WRITE_TIMEOUT_MS)) {
 		printf("page %u written: %s\n", (unsigned int)op.data, op.path.c_str());
 		return true;
 	}
@@ -682,27 +790,37 @@ bool avr_write_page(Operation const &op, Connection *conn)
 
 bool avr_write_hex(Operation const &op, Connection *conn)
 {
+	if (!op.target) {
+		fprintf(stderr, "flash operations require --target\n");
+		return false;
+	}
+	Target const &target = *op.target;
+	if (op.bytes.size() != target.definition().flash_bytes()
+		|| op.page_mask.size() != target.definition().flash_page_count) {
+		fprintf(stderr, "invalid flash image or page mask\n");
+		return false;
+	}
 	if (op.chip_erase && !avr_chip_erase(conn)) {
 		return false;
 	}
 
-	std::vector<uint8_t> pages_to_write(TargetATmega328P.flash_page_count, 0);
+	std::vector<uint8_t> pages_to_write(target.definition().flash_page_count, 0);
 	unsigned int pages_present = 0;
 	unsigned int pages_matching = 0;
-	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
-		size_t offset = (size_t)page * TargetATmega328P.flash_page_bytes;
+	for (uint16_t page = 0; page < target.definition().flash_page_count; page++) {
+		size_t offset = (size_t)page * target.definition().flash_page_bytes;
 		if (!op.page_mask[page]) {
 			continue;
 		}
 		pages_present++;
 
 		std::vector<uint8_t> current;
-		if (!avr_fetch_page(page, &current, conn)) {
+		if (!avr_fetch_page(page, target, &current, conn)) {
 			return false;
 		}
 		bool matches = true;
 		bool blank = true;
-		for (uint16_t i = 0; i < TargetATmega328P.flash_page_bytes; i++) {
+		for (uint16_t i = 0; i < target.definition().flash_page_bytes; i++) {
 			if (current[i] != op.bytes[offset + i]) {
 				matches = false;
 			}
@@ -721,16 +839,17 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 	}
 
 	unsigned int pages_written = 0;
-	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
+	for (uint16_t page = 0; page < target.definition().flash_page_count; page++) {
 		if (!pages_to_write[page]) {
 			continue;
 		}
-		size_t offset = (size_t)page * TargetATmega328P.flash_page_bytes;
+		size_t offset = (size_t)page * target.definition().flash_page_bytes;
 		Operation page_operation;
 		page_operation.command = CMD_WRITE_PAGE;
+		page_operation.target = op.target;
 		page_operation.data = page;
 		page_operation.path = op.path;
-		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + TargetATmega328P.flash_page_bytes);
+		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + target.definition().flash_page_bytes);
 		if (!avr_write_page(page_operation, conn)) {
 			return false;
 		}
@@ -751,35 +870,25 @@ bool perform(Operation const &op, Connection *conn)
 	}
 	
 	if (op.command == _CMD_DUMP_BUFFER) {
-		std::vector<char> line;
 		write_command(conn, CMD_CLEAR);
 		write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
 		for (int i = 0; i < 16; i++) {
 			write_command(conn, CMD_READ_16BYTES);
-			if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
-				fprintf(stderr, "no response\n");
+			std::vector<uint8_t> data;
+			if (!read_response(conn, 16, &data, COMMAND_TIMEOUT_MS)) {
 				return false;
 			}
 			for (int j = 0; j < 16; j++) {
-				char tmp[10];
-				tmp[0] = line[j * 2 + 0];
-				tmp[1] = line[j * 2 + 1];
-				tmp[2] = 0;
-				if (isxdigit((unsigned char)tmp[0]) && isxdigit((unsigned char)tmp[1])) {
-					tmp[0] = toupper((unsigned char)tmp[0]);
-					tmp[1] = toupper((unsigned char)tmp[1]);
-				} else {
-					tmp[0] = '-';
-					tmp[1] = '-';
-				}
 				if (j > 0) {
 					putchar(' ');
 				}
-				fwrite(tmp, 1, 2, stdout);
+				printf("%02X", data[j]);
 			}
 			putchar('\n');
 		}
 		return true;
+	} else if (op.command == _CMD_DETECT) {
+		return avr_detect(conn);
 	} else if (op.command == _CMD_READ_HEX) {
 		return avr_read_hex(op, conn);
 	} else if (op.command == _CMD_WRITE_HEX) {
@@ -814,126 +923,176 @@ void test(Options const &, Connection *conn)
 	conn->write_pin(Connection::PIN_MOSI, false);
 }
 
-int main(int argc, char **argv)
+struct OperationOption {
+	std::string_view name;
+	Command command;
+	uint16_t data;
+	int argument_count;
+};
+
+struct OperationArguments {
+	OperationOption const *option;
+	std::string_view arguments[2];
+};
+
+bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationArguments> *pending)
 {
-	Options opts;
-	opts.serial_options.speed = 115200;
-	std::vector<Operation> operations;
+	static constexpr OperationOption operation_options[] = {
+		{"--detect", _CMD_DETECT, 0, 0},
+		{"--debug", CMD_DEBUG, 0, 0},
+		{"-rs", CMD_READ_SIGNATURE, 0, 0},
+		{"--read-signature", CMD_READ_SIGNATURE, 0, 0},
+		{"-rfl", CMD_READ_FUSE, 0, 0},
+		{"--read-fuse-low", CMD_READ_FUSE, 0, 0},
+		{"-rfh", CMD_READ_FUSE, 1, 0},
+		{"--read-fuse-high", CMD_READ_FUSE, 1, 0},
+		{"-rfe", CMD_READ_FUSE, 2, 0},
+		{"--read-fuse-extended", CMD_READ_FUSE, 2, 0},
+		{"-rl", CMD_READ_LOCK, 0, 0},
+		{"--read-lock", CMD_READ_LOCK, 0, 0},
+		{"--read-page", CMD_READ_PAGE, 0, 2},
+		{"--write-page", CMD_WRITE_PAGE, 0, 2},
+		{"--read-hex", _CMD_READ_HEX, 0, 1},
+		{"--write-hex", _CMD_WRITE_HEX, 0, 1},
+		{"-wfl", CMD_WRITE_FUSE, 0, 1},
+		{"--write-fuse-low", CMD_WRITE_FUSE, 0, 1},
+		{"-wfh", CMD_WRITE_FUSE, 1, 1},
+		{"--write-fuse-high", CMD_WRITE_FUSE, 1, 1},
+		{"-wfe", CMD_WRITE_FUSE, 2, 1},
+		{"--write-fuse-extended", CMD_WRITE_FUSE, 2, 1},
+		{"-wl", CMD_WRITE_LOCK, 0, 1},
+		{"--write-lock", CMD_WRITE_LOCK, 0, 1},
+		{"--chip-erase", CMD_CHIP_ERASE, 0, 0},
+		{"--dump-buffer", _CMD_DUMP_BUFFER, 0, 0},
+	};
+	opts->serial_options.speed = 115200;
+	std::string_view target_name;
+	bool target_specified = false;
 
 	int argi = 1;
 	while (argi < argc) {
 		std::string_view arg = argv[argi++];
 		if (arg == "-p") {
 			if (argi < argc) {
-				opts.serial_options.port = argv[argi++];
+				opts->serial_options.port = argv[argi++];
 			} else {
 				fprintf(stderr, "-p requires a port name\n");
-				return 1;
+				return false;
 			}
-		} else if (arg == "--debug") {
-			operations.push_back({CMD_DEBUG});
-		} else if (arg == "-rs" || arg == "--read-signature") {
-			operations.push_back({CMD_READ_SIGNATURE});
-		} else if (arg == "-rfl" || arg == "--read-fuse-low") {
-			operations.push_back({CMD_READ_FUSE, 0});
-		} else if (arg == "-rfh" || arg == "--read-fuse-high") {
-			operations.push_back({CMD_READ_FUSE, 1});
-		} else if (arg == "-rfe" || arg == "--read-fuse-extended") {
-			operations.push_back({CMD_READ_FUSE, 2});
-		} else if (arg == "-rl" || arg == "--read-lock") {
-			operations.push_back({CMD_READ_LOCK});
-		} else if (arg == "--read-page") {
-			uint16_t page;
-			if (argi >= argc || !parse_page(argv[argi++], &page)) {
-				fprintf(stderr, "--read-page requires a page number from 0 to %u\n", (unsigned int)(TargetATmega328P.flash_page_count - 1));
-				return 1;
-			}
-			if (argi >= argc) {
-				fprintf(stderr, "--read-page requires an output file\n");
-				return 1;
-			}
-			std::string path = argv[argi++];
-			operations.push_back({CMD_READ_PAGE, page, 0, path});
-		} else if (arg == "--write-page") {
-			uint16_t page;
-			if (argi >= argc || !parse_page(argv[argi++], &page)) {
-				fprintf(stderr, "--write-page requires a page number from 0 to %u\n", (unsigned int)(TargetATmega328P.flash_page_count - 1));
-				return 1;
-			}
-			if (argi >= argc) {
-				fprintf(stderr, "--write-page requires an input file\n");
-				return 1;
-			}
-			std::string path = argv[argi++];
-			std::vector<uint8_t> data;
-			if (!read_page_file(path.c_str(), &data)) {
-				return 1;
-			}
-			operations.push_back({CMD_WRITE_PAGE, page, 0, path, data});
-		} else if (arg == "--write-hex") {
-			if (argi >= argc) {
-				fprintf(stderr, "--write-hex requires an Intel HEX file\n");
-				return 1;
-			}
-			std::string path = argv[argi++];
-			std::vector<uint8_t> image;
-			std::vector<uint8_t> page_mask;
-			if (!read_hex_file(path.c_str(), &image, &page_mask)) {
-				return 1;
-			}
-			operations.push_back({_CMD_WRITE_HEX, 0, 0, path, image, page_mask});
 		} else if (arg == "--no-chip-erase") {
-			opts.chip_erase_before_write_hex = false;
-		} else if (arg == "--read-hex") {
-			if (argi >= argc) {
-				fprintf(stderr, "--read-hex requires an output file\n");
-				return 1;
+			opts->chip_erase_before_write_hex = false;
+		} else if (arg == "-t" || arg == "--target") {
+			if (target_specified) {
+				fprintf(stderr, "target specified more than once\n");
+				return false;
 			}
-			std::string path = argv[argi++];
-			operations.push_back({_CMD_READ_HEX, 0, 0, path});
-		} else if (arg == "-wfl" || arg == "--write-fuse-low") {
-			uint8_t value;
-			if (argi >= argc || !parse_byte(argv[argi++], &value)) {
-				fprintf(stderr, "%.*s requires a byte value\n", (int)arg.size(), arg.data());
-				return 1;
+			if (argi >= argc || argv[argi][0] == '-') {
+				fprintf(stderr, "%.*s requires a target name (atmega8, atmega328p)\n", (int)arg.size(), arg.data());
+				return false;
 			}
-			operations.push_back({CMD_WRITE_FUSE, 0, value});
-		} else if (arg == "-wfh" || arg == "--write-fuse-high") {
-			uint8_t value;
-			if (argi >= argc || !parse_byte(argv[argi++], &value)) {
-				fprintf(stderr, "%.*s requires a byte value\n", (int)arg.size(), arg.data());
-				return 1;
-			}
-			operations.push_back({CMD_WRITE_FUSE, 1, value});
-		} else if (arg == "-wfe" || arg == "--write-fuse-extended") {
-			uint8_t value;
-			if (argi >= argc || !parse_byte(argv[argi++], &value)) {
-				fprintf(stderr, "%.*s requires a byte value\n", (int)arg.size(), arg.data());
-				return 1;
-			}
-			operations.push_back({CMD_WRITE_FUSE, 2, value});
-		} else if (arg == "-wl" || arg == "--write-lock") {
-			uint8_t value;
-			if (argi >= argc || !parse_byte(argv[argi++], &value)) {
-				fprintf(stderr, "%.*s requires a byte value\n", (int)arg.size(), arg.data());
-				return 1;
-			}
-			operations.push_back({CMD_WRITE_LOCK, 0, value});
-		} else if (arg == "--chip-erase") {
-			operations.push_back({CMD_CHIP_ERASE});
+			target_name = argv[argi++];
+			target_specified = true;
 		} else if (arg == "-s" || arg == "--speed") {
 			if (argi < argc) {
-				opts.serial_options.speed = atoi(argv[argi++]);
+				opts->serial_options.speed = atoi(argv[argi++]);
 			} else {
 				fprintf(stderr, "-s requires a speed value\n");
-				return 1;
+				return false;
 			}
-		} else if (arg == "--dump-buffer") {
-			operations.push_back({_CMD_DUMP_BUFFER});
 		} else {
-			fprintf(stderr, "unknown option: %.*s\n", (int)arg.size(), arg.data());
-			return 1;
+			OperationOption const *option = nullptr;
+			for (OperationOption const &candidate : operation_options) {
+				if (candidate.name == arg) {
+					option = &candidate;
+					break;
+				}
+			}
+			if (!option) {
+				fprintf(stderr, "unknown option: %.*s\n", (int)arg.size(), arg.data());
+				return false;
+			}
+			if (argc - argi < option->argument_count) {
+				fprintf(stderr, "%.*s requires %d argument(s)\n", (int)arg.size(), arg.data(), option->argument_count);
+				return false;
+			}
+			OperationArguments operation = {option, {}};
+			for (int i = 0; i < option->argument_count; i++) {
+				operation.arguments[i] = argv[argi++];
+			}
+			pending->push_back(operation);
 		}
+	}
+
+	if (target_specified) {
+		opts->target = create_target(target_name);
+		if (!opts->target) {
+			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega328p)\n", (int)target_name.size(), target_name.data());
+			return false;
+		}
+	}
+	return true;
+}
+
+bool build_operations(Options const &opts, std::vector<OperationArguments> const &pending, std::vector<Operation> *operations)
+{
+	for (OperationArguments const &arguments : pending) {
+		OperationOption const &option = *arguments.option;
+		Operation operation;
+		operation.command = option.command;
+		operation.data = option.data;
+		operation.target = opts.target.get();
+		bool flash_operation = option.command == CMD_READ_PAGE || option.command == CMD_WRITE_PAGE
+			|| option.command == _CMD_READ_HEX || option.command == _CMD_WRITE_HEX;
+		if (flash_operation && !opts.target) {
+			fprintf(stderr, "%.*s requires --target\n", (int)option.name.size(), option.name.data());
+			return false;
+		}
+		if (flash_operation) {
+			FlashParameters parameters;
+			if (!opts.target->definition().flash_page_count
+				|| !make_flash_parameters(opts.target->definition().flash_page_count - 1, *opts.target, &parameters)) {
+				return false;
+			}
+		}
+		if (option.command == CMD_READ_PAGE || option.command == CMD_WRITE_PAGE) {
+			if (!parse_page(arguments.arguments[0].data(), *opts.target, &operation.data)) {
+				fprintf(stderr, "%.*s requires a page number from 0 to %u\n", (int)option.name.size(), option.name.data(), (unsigned int)(opts.target->definition().flash_page_count - 1));
+				return false;
+			}
+			operation.path = arguments.arguments[1];
+			if (option.command == CMD_WRITE_PAGE && !read_page_file(operation.path.c_str(), *opts.target, &operation.bytes)) {
+				return false;
+			}
+		} else if (option.command == _CMD_READ_HEX || option.command == _CMD_WRITE_HEX) {
+			operation.path = arguments.arguments[0];
+			if (option.command == _CMD_WRITE_HEX) {
+				if (!read_hex_file(operation.path.c_str(), *opts.target, &operation.bytes, &operation.page_mask)) {
+					return false;
+				}
+				operation.chip_erase = opts.chip_erase_before_write_hex;
+			}
+		} else if (option.command == CMD_WRITE_FUSE || option.command == CMD_WRITE_LOCK) {
+			if (!parse_byte(arguments.arguments[0].data(), &operation.value)) {
+				fprintf(stderr, "%.*s requires a byte value\n", (int)option.name.size(), option.name.data());
+				return false;
+			}
+		}
+		operations->push_back(std::move(operation));
+	}
+	if (operations->empty()) {
+		fprintf(stderr, "no command specified\n");
+		return false;
+	}
+	return true;
+}
+
+int main(int argc, char **argv)
+{
+	Options opts;
+	std::vector<OperationArguments> pending;
+	std::vector<Operation> operations;
+	if (!parse_options(argc, argv, &opts, &pending) || !build_operations(opts, pending, &operations)) {
+		return 1;
 	}
 
 #ifdef _WIN32
@@ -942,17 +1101,6 @@ int main(int argc, char **argv)
 	}
 #else
 #endif
-
-	if (operations.empty()) {
-		fprintf(stderr, "no command specified\n");
-		return 1;
-	}
-
-	for (Operation &operation : operations) {
-		if (operation.command == _CMD_WRITE_HEX) {
-			operation.chip_erase = opts.chip_erase_before_write_hex;
-		}
-	}
 
 	Connection conn;
 	if (!conn.open(&opts.serial_options)) {
