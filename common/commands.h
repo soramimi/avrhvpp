@@ -25,7 +25,7 @@ enum Command {
 	_CMD_DUMP_BUFFER = 0x100,
 	_CMD_WRITE_HEX = 0x101,
 	_CMD_READ_HEX = 0x102,
-	_CMD_DETECT = 0x103,
+	_CMD_QUERY = 0x103,
 };
 
 enum class ProtocolError : uint8_t {

@@ -556,7 +556,7 @@ bool avr_fetch_status(Command command, uint8_t address, size_t bytes, std::vecto
 	return read_response(conn, bytes, data, COMMAND_TIMEOUT_MS);
 }
 
-bool avr_detect(Connection *conn)
+bool avr_query(Connection *conn)
 {
 	std::vector<uint8_t> signature;
 	if (!avr_fetch_status(CMD_READ_SIGNATURE, 0, 3, &signature, conn)) return false;
@@ -887,8 +887,8 @@ bool perform(Operation const &op, Connection *conn)
 			putchar('\n');
 		}
 		return true;
-	} else if (op.command == _CMD_DETECT) {
-		return avr_detect(conn);
+	} else if (op.command == _CMD_QUERY) {
+		return avr_query(conn);
 	} else if (op.command == _CMD_READ_HEX) {
 		return avr_read_hex(op, conn);
 	} else if (op.command == _CMD_WRITE_HEX) {
@@ -938,7 +938,8 @@ struct OperationArguments {
 bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationArguments> *pending)
 {
 	static constexpr OperationOption operation_options[] = {
-		{"--detect", _CMD_DETECT, 0, 0},
+		{"--query", _CMD_QUERY, 0, 0},
+		{"-q", _CMD_QUERY, 0, 0},
 		{"--debug", CMD_DEBUG, 0, 0},
 		{"-rs", CMD_READ_SIGNATURE, 0, 0},
 		{"--read-signature", CMD_READ_SIGNATURE, 0, 0},

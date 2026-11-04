@@ -99,7 +99,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 ```sh
 ./avrhvpp -p /dev/ttyACM0 --read-signature      # シグネチャを読み出し
-./avrhvpp -p /dev/ttyACM0 --detect              # チップを検出し、対応するヒューズとロックビットを表示
+./avrhvpp -p /dev/ttyACM0 --query              # チップを検出し、対応するヒューズとロックビットを表示
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-low       # low fuse を読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-high      # high fuse を読み出し
 ./avrhvpp -p /dev/ttyACM0 --read-fuse-extended  # extended fuse を読み出し
@@ -123,7 +123,7 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 0x1e, 0x95, 0x0f
 ```
 
-`--detect`は`--target`を指定せずに実行できます。シグネチャ3バイトから定義済みターゲットを検索し、チップ名、ページサイズ、総ページ数、Flashサイズと、対応するヒューズ／ロックビットを表示します。ATmega328Pの場合の出力例:
+`--query`（省略形`-q`）は`--target`を指定せずに実行できます。シグネチャ3バイトから定義済みターゲットを検索し、チップ名、ページサイズ、総ページ数、Flashサイズと、対応するヒューズ／ロックビットを表示します。ATmega328Pの場合の出力例:
 
 ```text
 signature: 0x1e, 0x95, 0x0f
@@ -147,7 +147,7 @@ lock bits: 0xfc
 | `-t <target>`, `--target <target>` | ターゲットを選択（`atmega8`、`atmega328p`）。Flashページ／HEX操作では必須 |
 | `-s <speed>`, `--speed <speed>` | ボーレート（既定 115200。USB CDC なので通常は無関係） |
 | `--debug` | 予約済みのデバッグコマンドを送る。ファームウェア側の処理は現在無効で、応答しない |
-| `--detect` | シグネチャ、検出したチップ名、対応するヒューズとロックビットを表示する。`--target`不要 |
+| `-q`, `--query` | シグネチャ、検出したチップ名、対応するヒューズとロックビットを表示する。`--target`不要 |
 | `-rs`, `--read-signature` | シグネチャ3バイトを読み出す |
 | `-rfl`, `--read-fuse-low` | low fuseを読み出す |
 | `-rfh`, `--read-fuse-high` | high fuseを読み出す |

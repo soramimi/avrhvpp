@@ -178,7 +178,7 @@ static std::string capture_operation(Operation const &operation, Connection *con
 	return text;
 }
 
-static void test_detect(Connection *connection)
+static void test_query(Connection *connection)
 {
 	for (bool small : {false, true}) {
 		reset();
@@ -187,8 +187,8 @@ static void test_detect(Connection *connection)
 		fuse_values = {{0x62, 0xd9, 0xff, 0xfc}};
 		Options options;
 		std::vector<Operation> operations;
-		assert(parse_arguments({"avrhvpp", "--detect", "--read-signature"}, &options, &operations));
-		assert(!options.target && operations.size() == 2 && operations[0].command == _CMD_DETECT);
+		assert(parse_arguments({"avrhvpp", small ? "-q" : "--query", "--read-signature"}, &options, &operations));
+		assert(!options.target && operations.size() == 2 && operations[0].command == _CMD_QUERY);
 		assert(operations[1].command == CMD_READ_SIGNATURE);
 		bool ok;
 		std::string text = capture_operation(operations[0], connection, &ok);
@@ -206,12 +206,12 @@ static void test_detect(Connection *connection)
 	signature1 = 0x93; signature2 = 0x07;
 	Options options;
 	std::vector<Operation> operations;
-	assert(parse_arguments({"avrhvpp", "--target", "atmega328p", "--detect"}, &options, &operations));
+	assert(parse_arguments({"avrhvpp", "--target", "atmega328p", "--query"}, &options, &operations));
 	bool ok;
 	std::string text = capture_operation(operations[0], connection, &ok);
 	assert(ok && text.find("chip: ATmega8\n") != std::string::npos);
 	assert(text.find("fuse ex") == std::string::npos);
-	assert(options.target->name() == "atmega328p"); // Detect does not change subsequent Flash target.
+	assert(options.target->name() == "atmega328p"); // Query does not change subsequent Flash target.
 	reset();
 	signature1 = 0x95; signature2 = 0x07; // Same first two bytes as 328P, different final byte.
 	text = capture_operation(operations[0], connection, &ok);
@@ -569,6 +569,6 @@ int main()
 		assert(write_pulses == 1);
 	}
 	test_targets(&connection);
-	test_detect(&connection);
+	test_query(&connection);
 	puts("Protocol integration and boundary tests passed without hardware.");
 }
