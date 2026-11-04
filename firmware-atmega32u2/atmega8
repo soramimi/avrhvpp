@@ -1,0 +1,13 @@
+
+AVRHVPP := ../app/_bin/avrhvpp -p /dev/ttyACM0
+
+test:
+	$(AVRHVPP) -wfl e4
+	$(AVRHVPP) -rs -rfl -rfh -rfe
+
+readhex:
+	$(AVRHVPP) --read-hex /tmp/a.hex
+
+writehex:
+	$(AVRHVPP) --write-hex /tmp/a.hex
+

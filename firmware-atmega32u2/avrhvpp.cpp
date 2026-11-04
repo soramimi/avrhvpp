@@ -9,7 +9,7 @@
 
 extern uint8_t flush_buffer[256];
 
-static_assert(Target::FlashPageBytes <= sizeof(flush_buffer), "flash page does not fit in buffer");
+static_assert(TargetATmega328P.flash_page_bytes <= sizeof(flush_buffer), "flash page does not fit in buffer");
 
 AVRHVPP::AVRHVPP()
 {
@@ -280,21 +280,22 @@ uint8_t AVRHVPP::read_signature(int addr)
 
 bool AVRHVPP::matches_target_signature()
 {
-	return read_signature(0) == Target::Signature0
-		&& read_signature(1) == Target::Signature1
-		&& read_signature(2) == Target::Signature2;
+	return TargetATmega328P.matches_signature(
+		read_signature(0),
+		read_signature(1),
+		read_signature(2));
 }
 
 bool AVRHVPP::read_flash_page(uint16_t page, uint8_t *data, uint16_t size)
 {
-	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
 		return false;
 	}
 
-	uint16_t address = Target::flash_word_address(page, 0);
+	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x02);
 	load_flash_address((uint8_t)(address >> 8), true);
-	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
 		read_flash_word(address + word, data + word * 2, data + word * 2 + 1);
 	}
 	return true;
@@ -302,16 +303,16 @@ bool AVRHVPP::read_flash_page(uint16_t page, uint8_t *data, uint16_t size)
 
 bool AVRHVPP::compare_flash_page(uint16_t page, uint8_t const *data, uint16_t size, bool *matches, bool *blank)
 {
-	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
 		return false;
 	}
 
 	*matches = true;
 	*blank = true;
-	uint16_t address = Target::flash_word_address(page, 0);
+	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x02);
 	load_flash_address((uint8_t)(address >> 8), true);
-	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
 		uint8_t low;
 		uint8_t high;
 		read_flash_word(address + word, &low, &high);
@@ -327,13 +328,13 @@ bool AVRHVPP::compare_flash_page(uint16_t page, uint8_t const *data, uint16_t si
 
 bool AVRHVPP::write_flash_page(uint16_t page, uint8_t const *data, uint16_t size)
 {
-	if (page >= Target::FlashPageCount || size != Target::FlashPageBytes) {
+	if (page >= TargetATmega328P.flash_page_count || size != TargetATmega328P.flash_page_bytes) {
 		return false;
 	}
 
-	uint16_t address = Target::flash_word_address(page, 0);
+	uint16_t address = TargetATmega328P.flash_word_address(page, 0);
 	load_flash_command(0x10);
-	for (uint8_t word = 0; word < Target::FlashPageWords; word++) {
+	for (uint8_t word = 0; word < TargetATmega328P.flash_page_words(); word++) {
 		load_flash_address((uint8_t)(address + word), false);
 		load_flash_data(data[word * 2], false);
 		load_flash_data(data[word * 2 + 1], true);
@@ -632,7 +633,7 @@ void AVRHVPP::process(uint8_t c)
 		}
 	} else if (c == CMD_READ_PAGE) {
 		uint16_t page = page_num_;
-		bool parameters_valid = page_num_valid_ && page < Target::FlashPageCount;
+		bool parameters_valid = page_num_valid_ && page < TargetATmega328P.flash_page_count;
 		page_num_valid_ = false;
 		if (!parameters_valid) {
 			SendNACK();
@@ -640,7 +641,7 @@ void AVRHVPP::process(uint8_t c)
 		}
 		if (EnterProgrammingMode()) {
 			bool ok = matches_target_signature()
-				&& read_flash_page(page, flush_buffer, Target::FlashPageBytes);
+				&& read_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes);
 			set_programming_mode(false);
 			if (ok) {
 				addr_ = 0;
@@ -652,9 +653,9 @@ void AVRHVPP::process(uint8_t c)
 	} else if (c == CMD_WRITE_PAGE) {
 		uint16_t page = page_num_;
 		bool parameters_valid = page_num_valid_
-			&& page < Target::FlashPageCount
+			&& page < TargetATmega328P.flash_page_count
 			&& buffer_data_valid_
-			&& buffer_data_count_ == Target::FlashPageBytes;
+			&& buffer_data_count_ == TargetATmega328P.flash_page_bytes;
 		page_num_valid_ = false;
 		buffer_data_valid_ = false;
 		buffer_data_count_ = 0;
@@ -666,11 +667,11 @@ void AVRHVPP::process(uint8_t c)
 			bool matches = false;
 			bool blank = false;
 			bool ok = matches_target_signature()
-				&& compare_flash_page(page, flush_buffer, Target::FlashPageBytes, &matches, &blank);
+				&& compare_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes, &matches, &blank);
 			if (ok && !matches) {
 				ok = blank
-					&& write_flash_page(page, flush_buffer, Target::FlashPageBytes)
-					&& verify_flash_page(page, flush_buffer, Target::FlashPageBytes);
+					&& write_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes)
+					&& verify_flash_page(page, flush_buffer, TargetATmega328P.flash_page_bytes);
 			}
 			set_programming_mode(false);
 			if (ok) {

@@ -228,7 +228,7 @@ bool parse_page(char const *text, uint16_t *page)
 	char *end;
 	int base = text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 16 : 10;
 	unsigned long value = strtoul(text, &end, base);
-	if (errno || end == text || *end || value >= Target::FlashPageCount) {
+	if (errno || end == text || *end || value >= TargetATmega328P.flash_page_count) {
 		return false;
 	}
 	*page = (uint16_t)value;
@@ -242,7 +242,7 @@ bool read_page_file(char const *path, std::vector<uint8_t> *data)
 		fprintf(stderr, "failed to open %s\n", path);
 		return false;
 	}
-	data->resize(Target::FlashPageBytes + 1);
+	data->resize(TargetATmega328P.flash_page_bytes + 1);
 	size_t size = fread(data->data(), 1, data->size(), fp);
 	bool ok = !ferror(fp);
 	if (fclose(fp) != 0) {
@@ -252,11 +252,11 @@ bool read_page_file(char const *path, std::vector<uint8_t> *data)
 		fprintf(stderr, "failed to read %s\n", path);
 		return false;
 	}
-	if (size != Target::FlashPageBytes) {
-		fprintf(stderr, "%s must be exactly %u bytes\n", path, (unsigned int)Target::FlashPageBytes);
+	if (size != TargetATmega328P.flash_page_bytes) {
+		fprintf(stderr, "%s must be exactly %u bytes\n", path, (unsigned int)TargetATmega328P.flash_page_bytes);
 		return false;
 	}
-	data->resize(Target::FlashPageBytes);
+	data->resize(TargetATmega328P.flash_page_bytes);
 	return true;
 }
 
@@ -300,9 +300,9 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 		return false;
 	}
 
-	image->assign(Target::flash_bytes(), 0xff);
-	std::vector<bool> assigned(Target::flash_bytes(), false);
-	page_mask->assign(Target::FlashPageCount, 0);
+	image->assign(TargetATmega328P.flash_bytes(), 0xff);
+	std::vector<bool> assigned(TargetATmega328P.flash_bytes(), false);
+	page_mask->assign(TargetATmega328P.flash_page_count, 0);
 	std::string line;
 	std::vector<uint8_t> record;
 	uint32_t base_address = 0;
@@ -330,7 +330,7 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 		uint8_t type = record[3];
 		if (type == 0x00) {
 			uint64_t absolute = (uint64_t)base_address + address;
-			if (absolute + size > Target::flash_bytes()) {
+			if (absolute + size > TargetATmega328P.flash_bytes()) {
 				fprintf(stderr, "%s:%u: address is outside ATmega328P flash\n", path, line_number);
 				return false;
 			}
@@ -343,7 +343,7 @@ bool read_hex_file(char const *path, std::vector<uint8_t> *image, std::vector<ui
 				}
 				image->at(offset) = value;
 				assigned[offset] = true;
-				page_mask->at(offset / Target::FlashPageBytes) = 1;
+				page_mask->at(offset / TargetATmega328P.flash_page_bytes) = 1;
 			}
 		} else if (type == 0x01) {
 			if (size != 0 || address != 0) {
@@ -577,7 +577,7 @@ bool avr_fetch_page(uint16_t page, std::vector<uint8_t> *data, Connection *conn)
 {
 	std::vector<char> line;
 	data->clear();
-	data->reserve(Target::FlashPageBytes);
+	data->reserve(TargetATmega328P.flash_page_bytes);
 
 	write_command(conn, CMD_CLEAR);
 	write_page_number(page, conn);
@@ -592,7 +592,7 @@ bool avr_fetch_page(uint16_t page, std::vector<uint8_t> *data, Connection *conn)
 	}
 
 	write_encoded_byte(conn, 0, CMD_ADDR0, CMD_ADDR1);
-	for (int block = 0; block < Target::FlashPageBytes / 16; block++) {
+	for (int block = 0; block < TargetATmega328P.flash_page_bytes / 16; block++) {
 		write_command(conn, CMD_READ_16BYTES);
 		if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
 			fprintf(stderr, "no response\n");
@@ -641,13 +641,13 @@ bool avr_read_page(Operation const &op, Connection *conn)
 
 bool avr_read_hex(Operation const &op, Connection *conn)
 {
-	std::vector<uint8_t> image(Target::flash_bytes());
-	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
+	std::vector<uint8_t> image(TargetATmega328P.flash_bytes());
+	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
 		std::vector<uint8_t> data;
 		if (!avr_fetch_page(page, &data, conn)) {
 			return false;
 		}
-		memcpy(&image[(size_t)page * Target::FlashPageBytes], data.data(), Target::FlashPageBytes);
+		memcpy(&image[(size_t)page * TargetATmega328P.flash_page_bytes], data.data(), TargetATmega328P.flash_page_bytes);
 	}
 
 	unsigned int records;
@@ -686,11 +686,11 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 		return false;
 	}
 
-	std::vector<uint8_t> pages_to_write(Target::FlashPageCount, 0);
+	std::vector<uint8_t> pages_to_write(TargetATmega328P.flash_page_count, 0);
 	unsigned int pages_present = 0;
 	unsigned int pages_matching = 0;
-	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
-		size_t offset = (size_t)page * Target::FlashPageBytes;
+	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
+		size_t offset = (size_t)page * TargetATmega328P.flash_page_bytes;
 		if (!op.page_mask[page]) {
 			continue;
 		}
@@ -702,7 +702,7 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 		}
 		bool matches = true;
 		bool blank = true;
-		for (uint16_t i = 0; i < Target::FlashPageBytes; i++) {
+		for (uint16_t i = 0; i < TargetATmega328P.flash_page_bytes; i++) {
 			if (current[i] != op.bytes[offset + i]) {
 				matches = false;
 			}
@@ -721,16 +721,16 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 	}
 
 	unsigned int pages_written = 0;
-	for (uint16_t page = 0; page < Target::FlashPageCount; page++) {
+	for (uint16_t page = 0; page < TargetATmega328P.flash_page_count; page++) {
 		if (!pages_to_write[page]) {
 			continue;
 		}
-		size_t offset = (size_t)page * Target::FlashPageBytes;
+		size_t offset = (size_t)page * TargetATmega328P.flash_page_bytes;
 		Operation page_operation;
 		page_operation.command = CMD_WRITE_PAGE;
 		page_operation.data = page;
 		page_operation.path = op.path;
-		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + Target::FlashPageBytes);
+		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + TargetATmega328P.flash_page_bytes);
 		if (!avr_write_page(page_operation, conn)) {
 			return false;
 		}
@@ -845,7 +845,7 @@ int main(int argc, char **argv)
 		} else if (arg == "--read-page") {
 			uint16_t page;
 			if (argi >= argc || !parse_page(argv[argi++], &page)) {
-				fprintf(stderr, "--read-page requires a page number from 0 to %u\n", (unsigned int)(Target::FlashPageCount - 1));
+				fprintf(stderr, "--read-page requires a page number from 0 to %u\n", (unsigned int)(TargetATmega328P.flash_page_count - 1));
 				return 1;
 			}
 			if (argi >= argc) {
@@ -857,7 +857,7 @@ int main(int argc, char **argv)
 		} else if (arg == "--write-page") {
 			uint16_t page;
 			if (argi >= argc || !parse_page(argv[argi++], &page)) {
-				fprintf(stderr, "--write-page requires a page number from 0 to %u\n", (unsigned int)(Target::FlashPageCount - 1));
+				fprintf(stderr, "--write-page requires a page number from 0 to %u\n", (unsigned int)(TargetATmega328P.flash_page_count - 1));
 				return 1;
 			}
 			if (argi >= argc) {
