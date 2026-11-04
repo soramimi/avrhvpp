@@ -9,12 +9,13 @@ SRCS := main.cpp avrhvpp.cpp waitloop.cpp usb.c
 LIBS := 
 
 CFLAGS := -Os -mmcu=$(MCU) -DF_CPU=$(F_CPU)
-CC := avr-gcc $(CFLAGS)
-CXX := avr-g++ $(CFLAGS) -std=c++11
+CXXFLAGS := -Os -mmcu=$(MCU) -DF_CPU=$(F_CPU)
+CC := avr-gcc
+CXX := avr-g++ -std=c++11
 LD := $(CXX)
 INCLUDEPATH :=
-CFLAGS := -O3 $(INCLUDEPATH)
-CXXFLAGS := -O3 $(INCLUDEPATH)
+#CFLAGS := -O3 $(INCLUDEPATH)
+#CXXFLAGS := -O3 $(INCLUDEPATH)
 
 OBJS := $(SRCS:%.c=%.o)
 OBJS := $(OBJS:%.cpp=%.o)
@@ -30,7 +31,7 @@ $(NAME).hex: $(NAME).elf
 	avr-objcopy -O ihex $< $@
 
 $(NAME).elf: $(OBJS)
-	$(CXX) $(OBJS) -o $(NAME).elf
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $(NAME).elf
 
 .c.o:
 	$(CC) $(CFLAGS) -MMD -MP -MF $(<:%.c=%.d) -c $< -o $(<:%.c=%.o)
@@ -80,4 +81,7 @@ writepage:
 
 readhex:
 	$(AVRHVPP) --read-hex /tmp/a.hex
+
+writehex:
+	$(AVRHVPP) --write-hex /tmp/a.hex
 

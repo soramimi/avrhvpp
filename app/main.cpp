@@ -454,6 +454,13 @@ void write_encoded_byte(Connection *conn, uint8_t value, uint8_t command0, uint8
 	write_command(conn, (value & 0x80) ? command1 : command0);
 }
 
+void write_page_number(uint16_t page, Connection *conn)
+{
+	write_encoded_byte(conn, (uint8_t)page, CMD_DATA0, CMD_DATA1);
+	write_encoded_byte(conn, (uint8_t)(page >> 8), CMD_DATA0, CMD_DATA1);
+	write_command(conn, CMD_LATCH_PAGE_NUM);
+}
+
 bool avr_read_status(Operation const &op, Connection *conn)
 {
 	int bytes = 0;
@@ -573,7 +580,7 @@ bool avr_fetch_page(uint16_t page, std::vector<uint8_t> *data, Connection *conn)
 	data->reserve(Target::FlashPageBytes);
 
 	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, (uint8_t)page, CMD_PAGE0, CMD_PAGE1);
+	write_page_number(page, conn);
 	write_command(conn, CMD_READ_PAGE);
 	if (!conn->read_line(&line, COMMAND_TIMEOUT_MS)) {
 		fprintf(stderr, "no response\n");
@@ -654,7 +661,7 @@ bool avr_read_hex(Operation const &op, Connection *conn)
 bool avr_write_page(Operation const &op, Connection *conn)
 {
 	write_command(conn, CMD_CLEAR);
-	write_encoded_byte(conn, (uint8_t)op.data, CMD_PAGE0, CMD_PAGE1);
+	write_page_number((uint16_t)op.data, conn);
 	for (uint8_t data : op.bytes) {
 		write_encoded_byte(conn, data, CMD_DATA0, CMD_DATA1);
 	}

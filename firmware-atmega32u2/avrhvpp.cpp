@@ -2,6 +2,8 @@
 #include "waitloop.h"
 #include <string.h>
 
+#include <avr/pgmspace.h>
+
 #include "../common/commands.h"
 #include "../common/target.h"
 
@@ -453,8 +455,10 @@ bool AVRHVPP::chip_erase()
 
 uint8_t data_7bits_ = 0;
 uint8_t addr_ = 0;
-uint16_t page_ = 0;
-bool page_valid_ = false;
+
+uint16_t page_num_ = 0;
+bool page_num_valid_ = false;
+
 uint16_t buffer_data_count_ = 0;
 bool buffer_data_valid_ = false;
 
@@ -470,9 +474,25 @@ static inline uint8_t writedata()
 
 void write_hex(char *p, uint8_t c)
 {
-	static char hex[] = "0123456789ABCDEF";
-	p[0] = hex[c >> 4];
-	p[1] = hex[c & 15];
+	static const char PROGMEM hex[]= "0123456789ABCDEF";
+	p[0] = pgm_read_byte(hex + (c >> 4));
+	p[1] = pgm_read_byte(hex + (c & 15));
+}
+
+void rewind() // don't clear page num
+{
+	addr_ = 0;
+	buffer_data_count_ = 0;
+	buffer_data_valid_ = true;
+	memset(flush_buffer, 0, sizeof(flush_buffer));
+}
+
+void cmd_clear()
+{
+	data_7bits_ = 0;
+	page_num_ = 0;
+	page_num_valid_ = false;
+	rewind();
 }
 
 void AVRHVPP::process(uint8_t c)
@@ -491,6 +511,18 @@ void AVRHVPP::process(uint8_t c)
 			return false;
 		}
 		return true;
+	};
+
+	auto AppendFlashBuffer = [&](uint8_t c) {
+		if (addr_ < sizeof(flush_buffer)) {
+			if (!buffer_data_valid_ || addr_ != buffer_data_count_) {
+				buffer_data_valid_ = false;
+			} else {
+				buffer_data_count_++;
+			}
+			flush_buffer[addr_] = c;
+			addr_++;
+		}
 	};
 
 	if (c == CMD_DEBUG) {
@@ -512,19 +544,7 @@ void AVRHVPP::process(uint8_t c)
 		}
 #endif
 	} else if (c == CMD_CLEAR) {
-		data_7bits_ = 0;
-		addr_ = 0;
-		page_ = 0;
-		page_valid_ = false;
-		buffer_data_count_ = 0;
-		buffer_data_valid_ = true;
-		if (1) {
-			memset(flush_buffer, 0, sizeof(flush_buffer));
-		} else { // debug
-			for (int i = 0; i < sizeof(flush_buffer); i++) {
-				flush_buffer[i] = i;
-			}
-		}
+		cmd_clear();
 	} else if (c == CMD_ADDR0) {
 		addr_ = data_7bits_ & 0x7f;
 		buffer_data_valid_ = false;
@@ -532,33 +552,17 @@ void AVRHVPP::process(uint8_t c)
 		addr_ = (data_7bits_ & 0x7f) | 0x80;
 		buffer_data_valid_ = false;
 	} else if (c == CMD_DATA0) {
-		uint8_t data = data_7bits_ & 0x7f;
-		if (addr_ < sizeof(flush_buffer)) {
-			if (!buffer_data_valid_ || addr_ != buffer_data_count_) {
-				buffer_data_valid_ = false;
-			} else {
-				buffer_data_count_++;
-			}
-			flush_buffer[addr_] = data;
-			addr_++;
-		}
+		AppendFlashBuffer(data_7bits_ & 0x7f);
 	} else if (c == CMD_DATA1) {
-		uint8_t data = (data_7bits_ & 0x7f) | 0x80;
-		if (addr_ < sizeof(flush_buffer)) {
-			if (!buffer_data_valid_ || addr_ != buffer_data_count_) {
-				buffer_data_valid_ = false;
-			} else {
-				buffer_data_count_++;
-			}
-			flush_buffer[addr_] = data;
-			addr_++;
+		AppendFlashBuffer((data_7bits_ & 0x7f) | 0x80);
+	} else if (c == CMD_LATCH_PAGE_NUM) {
+		page_num_valid_ = false;
+		if (buffer_data_valid_ && buffer_data_count_ == 2) {
+			page_num_ = (uint16_t)flush_buffer[0]
+				| ((uint16_t)flush_buffer[1] << 8);
+			page_num_valid_ = true;
 		}
-	} else if (c == CMD_PAGE0) {
-		page_ = data_7bits_ & 0x7f;
-		page_valid_ = true;
-	} else if (c == CMD_PAGE1) {
-		page_ = (data_7bits_ & 0x7f) | 0x80;
-		page_valid_ = true;
+		rewind();
 	} else if (c == CMD_READ_SIGNATURE) {
 		if (EnterProgrammingMode()) {
 			char tmp[20];
@@ -627,9 +631,9 @@ void AVRHVPP::process(uint8_t c)
 			}
 		}
 	} else if (c == CMD_READ_PAGE) {
-		uint16_t page = page_;
-		bool parameters_valid = page_valid_ && page < Target::FlashPageCount;
-		page_valid_ = false;
+		uint16_t page = page_num_;
+		bool parameters_valid = page_num_valid_ && page < Target::FlashPageCount;
+		page_num_valid_ = false;
 		if (!parameters_valid) {
 			SendNACK();
 			return;
@@ -646,12 +650,12 @@ void AVRHVPP::process(uint8_t c)
 			}
 		}
 	} else if (c == CMD_WRITE_PAGE) {
-		uint16_t page = page_;
-		bool parameters_valid = page_valid_
+		uint16_t page = page_num_;
+		bool parameters_valid = page_num_valid_
 			&& page < Target::FlashPageCount
 			&& buffer_data_valid_
 			&& buffer_data_count_ == Target::FlashPageBytes;
-		page_valid_ = false;
+		page_num_valid_ = false;
 		buffer_data_valid_ = false;
 		buffer_data_count_ = 0;
 		if (!parameters_valid) {
