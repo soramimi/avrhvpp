@@ -32,6 +32,15 @@ inline std::unique_ptr<Target> create_target(std::string_view name)
 	if (name == "atmega8") {
 		return std::make_unique<Target>(TargetATmega8, "atmega8");
 	}
+	if (name == "atmega48") {
+		return std::make_unique<Target>(TargetATmega48, "atmega48");
+	}
+	if (name == "atmega88") {
+		return std::make_unique<Target>(TargetATmega88, "atmega88");
+	}
+	if (name == "atmega168") {
+		return std::make_unique<Target>(TargetATmega168, "atmega168");
+	}
 	if (name == "atmega328p") {
 		return std::make_unique<Target>(TargetATmega328P, "atmega328p");
 	}

@@ -59,6 +59,45 @@ constexpr TargetDefinition TargetATmega8 = {
 		| CapabilityChipErase,
 };
 
+constexpr TargetDefinition TargetATmega48 = {
+	"ATmega48",
+	{0x1e, 0x92, 0x05},
+	64,
+	64,
+	CapabilityFlash
+		| CapabilityFuseLow
+		| CapabilityFuseHigh
+		| CapabilityFuseExtended
+		| CapabilityLockBits
+		| CapabilityChipErase,
+};
+
+constexpr TargetDefinition TargetATmega88 = {
+	"ATmega88",
+	{0x1e, 0x93, 0x0a},
+	64,
+	128,
+	CapabilityFlash
+		| CapabilityFuseLow
+		| CapabilityFuseHigh
+		| CapabilityFuseExtended
+		| CapabilityLockBits
+		| CapabilityChipErase,
+};
+
+constexpr TargetDefinition TargetATmega168 = {
+	"ATmega168",
+	{0x1e, 0x94, 0x06},
+	128,
+	128,
+	CapabilityFlash
+		| CapabilityFuseLow
+		| CapabilityFuseHigh
+		| CapabilityFuseExtended
+		| CapabilityLockBits
+		| CapabilityChipErase,
+};
+
 constexpr TargetDefinition TargetATmega328P = {
 	"ATmega328P",
 	{0x1e, 0x95, 0x0f},
@@ -80,6 +119,15 @@ inline TargetDefinition const *find_target_by_signature(
 	if (TargetATmega8.matches_signature(signature0, signature1, signature2)) {
 		return &TargetATmega8;
 	}
+	if (TargetATmega48.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATmega48;
+	}
+	if (TargetATmega88.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATmega88;
+	}
+	if (TargetATmega168.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATmega168;
+	}
 	if (TargetATmega328P.matches_signature(signature0, signature1, signature2)) {
 		return &TargetATmega328P;
 	}
@@ -93,6 +141,36 @@ static_assert(TargetATmega8.flash_word_address(0, 0) == 0x0000, "invalid ATmega8
 static_assert(TargetATmega8.flash_word_address(127, 31) == 0x0fff, "invalid ATmega8 flash address");
 static_assert(TargetATmega8.flash_bytes() == 8192, "invalid ATmega8 flash size");
 static_assert(!TargetATmega8.supports(CapabilityFuseExtended), "ATmega8 must not have extended fuse");
+
+static_assert(TargetATmega48.flash_page_bytes <= 256, "ATmega48 flash page does not fit in buffer");
+static_assert(TargetATmega48.flash_page_bytes % 2 == 0, "invalid ATmega48 flash page size");
+static_assert(TargetATmega48.flash_page_words() == 32, "invalid ATmega48 flash page size");
+static_assert(TargetATmega48.flash_word_address(0, 0) == 0, "invalid ATmega48 flash address");
+static_assert(TargetATmega48.flash_word_address(7, 31) == 0x00ff, "invalid ATmega48 flash boundary");
+static_assert(TargetATmega48.flash_word_address(8, 0) == 0x0100, "invalid ATmega48 flash boundary");
+static_assert(TargetATmega48.flash_word_address(63, 31) == 0x07ff, "invalid ATmega48 last flash address");
+static_assert(TargetATmega48.flash_bytes() == 4096, "invalid ATmega48 flash size");
+static_assert(TargetATmega48.supports(CapabilityFuseExtended), "ATmega48 must have extended fuse");
+
+static_assert(TargetATmega88.flash_page_bytes <= 256, "ATmega88 flash page does not fit in buffer");
+static_assert(TargetATmega88.flash_page_bytes % 2 == 0, "invalid ATmega88 flash page size");
+static_assert(TargetATmega88.flash_page_words() == 32, "invalid ATmega88 flash page size");
+static_assert(TargetATmega88.flash_word_address(0, 0) == 0, "invalid ATmega88 flash address");
+static_assert(TargetATmega88.flash_word_address(7, 31) == 0x00ff, "invalid ATmega88 flash boundary");
+static_assert(TargetATmega88.flash_word_address(8, 0) == 0x0100, "invalid ATmega88 flash boundary");
+static_assert(TargetATmega88.flash_word_address(127, 31) == 0x0fff, "invalid ATmega88 last flash address");
+static_assert(TargetATmega88.flash_bytes() == 8192, "invalid ATmega88 flash size");
+static_assert(TargetATmega88.supports(CapabilityFuseExtended), "ATmega88 must have extended fuse");
+
+static_assert(TargetATmega168.flash_page_bytes <= 256, "ATmega168 flash page does not fit in buffer");
+static_assert(TargetATmega168.flash_page_bytes % 2 == 0, "invalid ATmega168 flash page size");
+static_assert(TargetATmega168.flash_page_words() == 64, "invalid ATmega168 flash page size");
+static_assert(TargetATmega168.flash_word_address(0, 0) == 0, "invalid ATmega168 flash address");
+static_assert(TargetATmega168.flash_word_address(3, 63) == 0x00ff, "invalid ATmega168 flash boundary");
+static_assert(TargetATmega168.flash_word_address(4, 0) == 0x0100, "invalid ATmega168 flash boundary");
+static_assert(TargetATmega168.flash_word_address(127, 63) == 0x1fff, "invalid ATmega168 last flash address");
+static_assert(TargetATmega168.flash_bytes() == 16384, "invalid ATmega168 flash size");
+static_assert(TargetATmega168.supports(CapabilityFuseExtended), "ATmega168 must have extended fuse");
 
 static_assert(TargetATmega328P.flash_page_bytes <= 256, "ATmega328P flash page does not fit in buffer");
 static_assert(TargetATmega328P.flash_page_bytes % 2 == 0, "invalid ATmega328P flash page size");

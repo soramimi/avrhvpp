@@ -65,6 +65,10 @@ readfuse:
 #
 
 AVRHVPP := ../app/_bin/avrhvpp -p /dev/ttyACM0
+TARGET := atmega88
+
+q:
+	$(AVRHVPP) -q
 
 test:
 	$(AVRHVPP) -rs -rfl -rfh -rfe
@@ -77,8 +81,8 @@ writepage:
 	$(AVRHVPP) --write-page 0 /tmp/page0.bin
 
 readhex:
-	$(AVRHVPP) --target atmega328p --read-hex /tmp/a.hex
+	$(AVRHVPP) --target $(TARGET) --read-hex /tmp/a.hex
 
 writehex:
-	$(AVRHVPP) --target atmega328p --write-hex /tmp/a.hex
+	$(AVRHVPP) --target $(TARGET) --write-hex /tmp/a.hex -wfl e2
 

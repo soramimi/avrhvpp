@@ -180,6 +180,28 @@ static std::string capture_operation(Operation const &operation, Connection *con
 
 static void test_query(Connection *connection)
 {
+	struct QueryCase {
+		char const *name;
+		uint8_t signature1, signature2;
+		char const *expected;
+	};
+	for (auto const &test : {
+		QueryCase{"atmega48", 0x92, 0x05, "signature: 0x1e, 0x92, 0x05\nchip: ATmega48\npage size: 64 bytes\npage count: 64\nflash size: 4096 bytes\n"},
+		QueryCase{"atmega88", 0x93, 0x0a, "signature: 0x1e, 0x93, 0x0a\nchip: ATmega88\npage size: 64 bytes\npage count: 128\nflash size: 8192 bytes\n"},
+		QueryCase{"atmega168", 0x94, 0x06, "signature: 0x1e, 0x94, 0x06\nchip: ATmega168\npage size: 128 bytes\npage count: 128\nflash size: 16384 bytes\n"}}) {
+		reset();
+		signature1 = test.signature1;
+		signature2 = test.signature2;
+		Options options;
+		std::vector<Operation> operations;
+		assert(parse_arguments({"avrhvpp", "--query", "--target", test.name}, &options, &operations));
+		bool ok;
+		std::string expected = test.expected;
+		expected += "fuse lo: 0xff\nfuse hi: 0xff\nfuse ex: 0xff\nlock bits: 0xff\n";
+		assert(capture_operation(operations[0], connection, &ok) == expected && ok);
+		assert(fuse_reads == (std::vector<uint8_t>{0, 1, 2, 3}));
+		assert(write_pulses == 0);
+	}
 	for (bool small : {false, true}) {
 		reset();
 		signature1 = small ? 0x93 : 0x95;
@@ -239,7 +261,7 @@ static void test_targets(Connection *connection)
 	std::string page_path = std::string(directory) + "/page.bin";
 	std::string hex_path = std::string(directory) + "/image.hex";
 	std::string output_path = std::string(directory) + "/output.hex";
-	for (char const *name : {"atmega8", "atmega328p"}) {
+	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p"}) {
 		auto target = create_target(name);
 		auto const &definition = target->definition();
 		uint16_t page_bytes = definition.flash_page_bytes;

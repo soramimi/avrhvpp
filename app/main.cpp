@@ -988,7 +988,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 				return false;
 			}
 			if (argi >= argc || argv[argi][0] == '-') {
-				fprintf(stderr, "%.*s requires a target name (atmega8, atmega328p)\n", (int)arg.size(), arg.data());
+				fprintf(stderr, "%.*s requires a target name (atmega8, atmega48, atmega88, atmega168, atmega328p)\n", (int)arg.size(), arg.data());
 				return false;
 			}
 			target_name = argv[argi++];
@@ -1027,7 +1027,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 	if (target_specified) {
 		opts->target = create_target(target_name);
 		if (!opts->target) {
-			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega328p)\n", (int)target_name.size(), target_name.data());
+			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega48, atmega88, atmega168, atmega328p)\n", (int)target_name.size(), target_name.data());
 			return false;
 		}
 	}
