@@ -130,6 +130,7 @@ public:
 		STK500,
 		BITBANG,
 		AVRHVPP,
+		AVRISP,
 	};
 	Mode mode_ = STK500;
 	Mode mode() const
@@ -197,6 +198,7 @@ public:
 };
 
 struct Options {
+	Connection::Mode device = Connection::Mode::AVRHVPP;
 	Serial::Option serial_options;
 	std::unique_ptr<Target> target;
 	bool chip_erase_before_write_hex = true;
@@ -212,6 +214,18 @@ struct Operation {
 	bool chip_erase = false;
 	Target const *target = nullptr;
 };
+
+Connection::Mode parse_device_type(std::string_view name)
+{
+	if (name == "hvpp") {
+		return Connection::Mode::AVRHVPP;
+	} else if (name == "avrisp") {
+		return Connection::Mode::AVRISP;
+	} else {
+		fprintf(stderr, "unknown device type: %.*s\n", (int)name.size(), name.data());
+		return Connection::Mode::AVRHVPP;
+	}
+}
 
 bool parse_byte(char const *text, uint8_t *value)
 {
@@ -556,7 +570,7 @@ bool avr_fetch_status(Command command, uint8_t address, size_t bytes, std::vecto
 	return read_response(conn, bytes, data, COMMAND_TIMEOUT_MS);
 }
 
-bool avr_query(Connection *conn)
+bool hvpp_query(Connection *conn)
 {
 	std::vector<uint8_t> signature;
 	if (!avr_fetch_status(CMD_READ_SIGNATURE, 0, 3, &signature, conn)) return false;
@@ -592,7 +606,7 @@ bool avr_query(Connection *conn)
 	return true;
 }
 
-bool avr_read_status(Operation const &op, Connection *conn)
+bool hvpp_read_status(Operation const &op, Connection *conn)
 {
 	int bytes = 0;
 	switch (op.command) {
@@ -634,7 +648,7 @@ bool avr_read_status(Operation const &op, Connection *conn)
 	return true;
 }
 
-bool avr_write_fuse(Operation const &op, Connection *conn)
+bool hvpp_write_fuse(Operation const &op, Connection *conn)
 {
 	write_command(conn, CMD_CLEAR);
 	write_encoded_byte(conn, (uint8_t)op.data, CMD_DATA0, CMD_DATA1);
@@ -650,7 +664,7 @@ bool avr_write_fuse(Operation const &op, Connection *conn)
 	}
 }
 
-bool avr_write_lock(Operation const &op, Connection *conn)
+bool hvpp_write_lock(Operation const &op, Connection *conn)
 {
 	write_command(conn, CMD_CLEAR);
 	write_encoded_byte(conn, op.value, CMD_DATA0, CMD_DATA1);
@@ -665,7 +679,7 @@ bool avr_write_lock(Operation const &op, Connection *conn)
 	}
 }
 
-bool avr_chip_erase(Connection *conn)
+bool hvpp_chip_erase(Connection *conn)
 {
 	write_command(conn, CMD_CHIP_ERASE);
 
@@ -706,7 +720,7 @@ bool avr_fetch_page(uint16_t page, Target const &target, std::vector<uint8_t> *d
 	return true;
 }
 
-bool avr_read_page(Operation const &op, Connection *conn)
+bool hvpp_read_page(Operation const &op, Connection *conn)
 {
 	if (!op.target) {
 		fprintf(stderr, "flash operations require --target\n");
@@ -735,7 +749,7 @@ bool avr_read_page(Operation const &op, Connection *conn)
 	return true;
 }
 
-bool avr_read_hex(Operation const &op, Connection *conn)
+bool hvpp_read_hex(Operation const &op, Connection *conn)
 {
 	if (!op.target) {
 		fprintf(stderr, "flash operations require --target\n");
@@ -759,7 +773,7 @@ bool avr_read_hex(Operation const &op, Connection *conn)
 	return true;
 }
 
-bool avr_write_page(Operation const &op, Connection *conn)
+bool hvpp_write_page(Operation const &op, Connection *conn)
 {
 	if (!op.target) {
 		fprintf(stderr, "flash operations require --target\n");
@@ -788,7 +802,7 @@ bool avr_write_page(Operation const &op, Connection *conn)
 	return false;
 }
 
-bool avr_write_hex(Operation const &op, Connection *conn)
+bool hvpp_write_hex(Operation const &op, Connection *conn)
 {
 	if (!op.target) {
 		fprintf(stderr, "flash operations require --target\n");
@@ -800,7 +814,7 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 		fprintf(stderr, "invalid flash image or page mask\n");
 		return false;
 	}
-	if (op.chip_erase && !avr_chip_erase(conn)) {
+	if (op.chip_erase && !hvpp_chip_erase(conn)) {
 		return false;
 	}
 
@@ -850,7 +864,7 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 		page_operation.data = page;
 		page_operation.path = op.path;
 		page_operation.bytes.assign(op.bytes.begin() + offset, op.bytes.begin() + offset + target.definition().flash_page_bytes);
-		if (!avr_write_page(page_operation, conn)) {
+		if (!hvpp_write_page(page_operation, conn)) {
 			return false;
 		}
 		pages_written++;
@@ -862,7 +876,7 @@ bool avr_write_hex(Operation const &op, Connection *conn)
 	return true;
 }
 
-bool perform(Operation const &op, Connection *conn)
+bool hvpp_perform(Operation const &op, Connection *conn)
 {
 	if (!conn->enter_avrhvpp_mode()) {
 		fprintf(stderr, "failed to enter avrhvpp mode\n");
@@ -888,24 +902,87 @@ bool perform(Operation const &op, Connection *conn)
 		}
 		return true;
 	} else if (op.command == _CMD_QUERY) {
-		return avr_query(conn);
+		return hvpp_query(conn);
 	} else if (op.command == _CMD_READ_HEX) {
-		return avr_read_hex(op, conn);
+		return hvpp_read_hex(op, conn);
 	} else if (op.command == _CMD_WRITE_HEX) {
-		return avr_write_hex(op, conn);
+		return hvpp_write_hex(op, conn);
 	} else if (op.command == CMD_WRITE_FUSE) {
-		return avr_write_fuse(op, conn);
+		return hvpp_write_fuse(op, conn);
 	} else if (op.command == CMD_WRITE_LOCK) {
-		return avr_write_lock(op, conn);
+		return hvpp_write_lock(op, conn);
 	} else if (op.command == CMD_CHIP_ERASE) {
-		return avr_chip_erase(conn);
+		return hvpp_chip_erase(conn);
 	} else if (op.command == CMD_READ_PAGE) {
-		return avr_read_page(op, conn);
+		return hvpp_read_page(op, conn);
 	} else if (op.command == CMD_WRITE_PAGE) {
-		return avr_write_page(op, conn);
+		return hvpp_write_page(op, conn);
 	} else {
-		return avr_read_status(op, conn);
+		return hvpp_read_status(op, conn);
 	}
+}
+
+bool avrisp_read_signature(Connection *conn)
+{
+	char tmp[10];
+	int n;
+	conn->write("P\x20", 2);
+	n = conn->read(tmp, sizeof(tmp), 100);
+	if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) { // STK_INSYNC && STK_OK
+		// pass
+	} else {
+		fprintf(stderr, "failed to enter programming mode\n");
+		return false;
+	}
+	conn->write("\x75\x20", 2);
+	n = conn->read(tmp, sizeof(tmp), 100);
+	if (n == 5) {
+		if (tmp[0] == 0x14) { // STK_INSYNC
+			if (tmp[4] == 0x10) { // STK_OK
+				std::string text;
+				char const *ptr = tmp + 1;
+				size_t len = 3;
+				for (size_t i = 0; i < len; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					char tmp2[10];
+					sprintf(tmp2, "0x%02x", (unsigned char)ptr[i]);
+					text += tmp2;
+				}
+				puts(text.c_str());
+			}
+		}
+	}
+	
+	conn->write("Q\x20", 2);
+	n = conn->read(tmp, sizeof(tmp), 100);
+	if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) { // STK_INSYNC && STK_OK
+		// pass
+	} else {
+		fprintf(stderr, "failed to enter programming mode\n");
+		return false;
+	}
+	
+	return true;
+}
+
+bool avrisp_perform(Operation const &op, Connection *conn)
+{
+	if (!conn->sync()) {
+		fprintf(stderr, "failed to sync with AVRISP\n");
+		return false;
+	}
+	if (op.command == CMD_READ_SIGNATURE) {
+		return avrisp_read_signature(conn);
+	}
+	
+	// not implemented yet
+	
+	
+	
+	
+	return false;
 }
 
 void test(Options const &, Connection *conn)
@@ -973,11 +1050,19 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 	int argi = 1;
 	while (argi < argc) {
 		std::string_view arg = argv[argi++];
-		if (arg == "-p") {
+		if (arg == "-p" || arg == "--port") {
 			if (argi < argc) {
 				opts->serial_options.port = argv[argi++];
 			} else {
 				fprintf(stderr, "-p requires a port name\n");
+				return false;
+			}
+		} else if (arg == "-d" || arg == "--device") {
+			if (argi < argc) {
+				std::string_view name = argv[argi++];
+				opts->device = parse_device_type(name);
+			} else {
+				fprintf(stderr, "-d requires a device name\n");
 				return false;
 			}
 		} else if (arg == "--no-chip-erase") {
@@ -1042,8 +1127,7 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 		operation.command = option.command;
 		operation.data = option.data;
 		operation.target = opts.target.get();
-		bool flash_operation = option.command == CMD_READ_PAGE || option.command == CMD_WRITE_PAGE
-			|| option.command == _CMD_READ_HEX || option.command == _CMD_WRITE_HEX;
+		bool flash_operation = option.command == CMD_READ_PAGE || option.command == CMD_WRITE_PAGE || option.command == _CMD_READ_HEX || option.command == _CMD_WRITE_HEX;
 		if (flash_operation && !opts.target) {
 			fprintf(stderr, "%.*s requires --target\n", (int)option.name.size(), option.name.data());
 			return false;
@@ -1110,7 +1194,18 @@ int main(int argc, char **argv)
 	}
 
 	for (Operation const &operation : operations) {
-		if (!perform(operation, &conn)) {
+		if (opts.device == Connection::Mode::AVRHVPP) {
+			if (!hvpp_perform(operation, &conn)) {
+				conn.close();
+				return 1;
+			}
+		} else if (opts.device == Connection::Mode::AVRISP) {
+			if (!avrisp_perform(operation, &conn)) {
+				conn.close();
+				return 1;
+			}
+		} else {
+			fprintf(stderr, "unsupported device type\n");
 			conn.close();
 			return 1;
 		}
