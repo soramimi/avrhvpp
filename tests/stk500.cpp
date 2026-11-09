@@ -30,6 +30,7 @@ struct TargetFixture {
 	uint16_t page_bytes, pages, eeprom_bytes;
 	uint8_t fuse_bytes, extended_mask, lock_mask;
 	bool poll;
+	uint8_t pagel = 0xd7, bs2 = 0xc2;
 };
 static TargetFixture const targets[] = {
 	{0x70, {{0x1e, 0x93, 0x07}}, 64, 128, 512, 2, 0, 0x3f, false},
@@ -37,6 +38,8 @@ static TargetFixture const targets[] = {
 	{0x73, {{0x1e, 0x93, 0x0a}}, 64, 128, 512, 3, 7, 0x3f, true},
 	{0x86, {{0x1e, 0x94, 0x06}}, 128, 128, 512, 3, 7, 0x3f, true},
 	{0x86, {{0x1e, 0x95, 0x0f}}, 128, 256, 1024, 3, 7, 0x3f, true},
+	{0x23, {{0x1e, 0x91, 0x0a}}, 32, 64, 128, 3, 1, 3, true, 0xd4, 0xd6},
+	{0x14, {{0x1e, 0x90, 0x07}}, 32, 32, 64, 2, 0, 3, true, 0, 0},
 };
 static TargetFixture const *target;
 static std::array<uint8_t, 32768> memory;
@@ -123,7 +126,12 @@ static uint8_t transfer_instruction()
 		assert(second == 0xa0 || second == 0xa8 || second == 0xa4);
 		unsigned int fuse = second == 0xa0 ? 0 : second == 0xa8 ? 1 : 2;
 		assert(fuse != 2 || target->extended_mask);
-		if (fuse == 1) value = (value & ~0x20) | (fuses[1] & 0x20);
+		bool tiny13 = target->signature[1] == 0x90;
+		unsigned int spien_fuse = tiny13 ? 0 : 1;
+		uint8_t spien_mask = tiny13 ? 0x80 : 0x20;
+		if (fuse == spien_fuse) value = (value & ~spien_mask) | (fuses[fuse] & spien_mask);
+		uint8_t mask = fuse == 2 ? target->extended_mask : fuse == 1 && tiny13 ? 0x1f : 0xff;
+		value |= (uint8_t)~mask;
 		fuses[fuse] = value;
 		busy_until = elapsed_us + 4500;
 	}
@@ -145,6 +153,7 @@ static void reset(TargetFixture const &fixture, uint8_t chunk)
 	clear_buffers(); input.clear(); output.clear();
 	target = &fixture; usb_chunk = chunk;
 	memory.fill(0xff); page_buffer.fill(0xff); fuses = {{0x62, 0xd9, 0xfd}}; lock_bits = 0xff;
+	if (target->signature[1] == 0x90) fuses = {{0x6a, 0xff, 0xff}};
 	elapsed_us = busy_until = 0; spi_index = commits = enables = erases = 0; spi_log.clear();
 	pmode = false; here = 0; param = {}; error = 0;
 	reset_mode(Programmer::ISP);
@@ -172,7 +181,7 @@ static void configure()
 		0xff, 0xff, 0xff, 0xff, (uint8_t)(target->page_bytes >> 8), (uint8_t)target->page_bytes,
 		(uint8_t)(target->eeprom_bytes >> 8), (uint8_t)target->eeprom_bytes,
 		0, 0, (uint8_t)(size >> 8), (uint8_t)size, 0x20}, {0x14, 0x10});
-	expect({0x45, 5, 4, 0xd7, 0xc2, 1, 0x20}, {0x14, 0x10});
+	expect({0x45, 5, 4, target->pagel, target->bs2, 1, 0x20}, {0x14, 0x10});
 	assert(param.devicecode == target->code && param.pagesize == target->page_bytes
 		&& param.flashsize == size && param.eepromsize == target->eeprom_bytes && !rst_active_high);
 	expect({0x50, 0x20}, {0x14, 0x10});
@@ -237,8 +246,8 @@ int main()
 			assert(enables == 1);
 			expect({0x75, 0x20}, {0x14, fixture.signature[0], fixture.signature[1], fixture.signature[2], 0x10});
 			for (uint8_t i = 0; i < 3; ++i) universal({{0x30, 0, i, 0}}, fixture.signature[i]);
-			universal({{0x50, 0, 0, 0}}, 0x62);
-			universal({{0x58, 8, 0, 0}}, 0xd9);
+			universal({{0x50, 0, 0, 0}}, fuses[0]);
+			universal({{0x58, 8, 0, 0}}, fuses[1]);
 			if (fixture.extended_mask) universal({{0x50, 8, 0, 0}}, 0xfd);
 			universal({{0x58, 0, 0, 0}}, 0xff);
 			page_transfer(0, fixture.page_bytes);
@@ -246,8 +255,9 @@ int main()
 			page_transfer((fixture.pages - 1) * (fixture.page_bytes / 2), fixture.page_bytes);
 			universal({{0xac, 0xa0, 0, 0x63}}, 0); wait_ready();
 			universal({{0x50, 0, 0, 0}}, 0x63);
-			universal({{0xac, 0xa8, 0, 0xc9}}, 0); wait_ready();
-			universal({{0x58, 8, 0, 0}}, 0xc9);
+			uint8_t high = fixture.signature[1] == 0x90 ? 0xe9 : 0xc9;
+			universal({{0xac, 0xa8, 0, high}}, 0); wait_ready();
+			universal({{0x58, 8, 0, 0}}, high);
 			if (fixture.extended_mask) {
 				uint8_t value = (uint8_t)~fixture.extended_mask;
 				universal({{0xac, 0xa4, 0, value}}, 0); wait_ready();

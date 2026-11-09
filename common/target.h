@@ -10,6 +10,7 @@ enum TargetCapability : uint8_t {
 	CapabilityFuseExtended = 1 << 3,
 	CapabilityLockBits = 1 << 4,
 	CapabilityChipErase = 1 << 5,
+	CapabilityHvpp = 1 << 6,
 };
 
 struct IspParameters {
@@ -71,7 +72,8 @@ constexpr TargetDefinition TargetATmega8 = {
 		| CapabilityFuseLow
 		| CapabilityFuseHigh
 		| CapabilityLockBits
-		| CapabilityChipErase,
+		| CapabilityChipErase
+		| CapabilityHvpp,
 	{0x70, 512, 4, 0xd7, 0xc2, false, 10, 20, {0xff, 0xff, 0}, {0xff, 0xdf, 0}, 0x3f},
 };
 
@@ -85,7 +87,8 @@ constexpr TargetDefinition TargetATmega48 = {
 		| CapabilityFuseHigh
 		| CapabilityFuseExtended
 		| CapabilityLockBits
-		| CapabilityChipErase,
+		| CapabilityChipErase
+		| CapabilityHvpp,
 	{0x59, 256, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x01}, {0xff, 0xdf, 0x01}, 0x03},
 };
 
@@ -99,7 +102,8 @@ constexpr TargetDefinition TargetATmega88 = {
 		| CapabilityFuseHigh
 		| CapabilityFuseExtended
 		| CapabilityLockBits
-		| CapabilityChipErase,
+		| CapabilityChipErase
+		| CapabilityHvpp,
 	{0x73, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
 };
 
@@ -113,7 +117,8 @@ constexpr TargetDefinition TargetATmega168 = {
 		| CapabilityFuseHigh
 		| CapabilityFuseExtended
 		| CapabilityLockBits
-		| CapabilityChipErase,
+		| CapabilityChipErase
+		| CapabilityHvpp,
 	{0x86, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
 };
 
@@ -127,8 +132,38 @@ constexpr TargetDefinition TargetATmega328P = {
 		| CapabilityFuseHigh
 		| CapabilityFuseExtended
 		| CapabilityLockBits
-		| CapabilityChipErase,
+		| CapabilityChipErase
+		| CapabilityHvpp,
 	{0x86, 1024, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
+};
+
+// These targets are supported through AVRISP only by this programmer.
+constexpr TargetDefinition TargetATtiny2313 = {
+	"ATtiny2313",
+	{0x1e, 0x91, 0x0a},
+	32,
+	64,
+	CapabilityFlash
+		| CapabilityFuseLow
+		| CapabilityFuseHigh
+		| CapabilityFuseExtended
+		| CapabilityLockBits
+		| CapabilityChipErase,
+	{0x23, 128, 4, 0xd4, 0xd6, true, 0, 0, {0xff, 0xff, 0x01}, {0xff, 0xdf, 0x01}, 0x03},
+};
+
+constexpr TargetDefinition TargetATtiny13A = {
+	"ATtiny13A",
+	{0x1e, 0x90, 0x07},
+	32,
+	32,
+	CapabilityFlash
+		| CapabilityFuseLow
+		| CapabilityFuseHigh
+		| CapabilityLockBits
+		| CapabilityChipErase,
+	// SPIEN is bit 7 of the low fuse; high-fuse bits 7..5 are reserved.
+	{0x14, 64, 4, 0, 0, true, 0, 0, {0xff, 0x1f, 0}, {0x7f, 0x1f, 0}, 0x03},
 };
 
 inline TargetDefinition const *find_target_by_signature(
@@ -151,8 +186,26 @@ inline TargetDefinition const *find_target_by_signature(
 	if (TargetATmega328P.matches_signature(signature0, signature1, signature2)) {
 		return &TargetATmega328P;
 	}
+	if (TargetATtiny2313.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATtiny2313;
+	}
+	if (TargetATtiny13A.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATtiny13A;
+	}
 	return 0;
 }
+
+static_assert(TargetATtiny2313.flash_page_bytes == 32, "invalid ATtiny2313 flash page size");
+static_assert(TargetATtiny2313.flash_bytes() == 2048, "invalid ATtiny2313 flash size");
+static_assert(TargetATtiny2313.flash_word_address(63, 15) == 0x03ff, "invalid ATtiny2313 last flash address");
+static_assert(TargetATtiny2313.supports(CapabilityFuseExtended), "ATtiny2313 must have extended fuse");
+static_assert(!TargetATtiny2313.supports(CapabilityHvpp), "ATtiny2313 is AVRISP-only here");
+
+static_assert(TargetATtiny13A.flash_page_bytes == 32, "invalid ATtiny13A flash page size");
+static_assert(TargetATtiny13A.flash_bytes() == 1024, "invalid ATtiny13A flash size");
+static_assert(TargetATtiny13A.flash_word_address(31, 15) == 0x01ff, "invalid ATtiny13A last flash address");
+static_assert(!TargetATtiny13A.supports(CapabilityFuseExtended), "ATtiny13A must not have extended fuse");
+static_assert(!TargetATtiny13A.supports(CapabilityHvpp), "ATtiny13A is AVRISP-only here");
 
 static_assert(TargetATmega8.flash_page_bytes <= 256, "ATmega8 flash page does not fit in buffer");
 static_assert(TargetATmega8.flash_page_bytes % 2 == 0, "invalid ATmega8 flash page size");

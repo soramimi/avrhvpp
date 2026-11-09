@@ -120,6 +120,18 @@ static std::vector<uint8_t> pending_data;
 static std::chrono::steady_clock::time_point ready_at;
 
 static bool is_atmega8() { return signature[1] == 0x93 && signature[2] == 0x07; }
+static bool is_attiny13a() { return signature[1] == 0x90 && signature[2] == 0x07; }
+
+static uint8_t status_mask(uint8_t index)
+{
+	if (index == 1 && is_attiny13a()) return 0x1f;
+	if (index == 2) {
+		if (is_atmega8() || is_attiny13a()) return 0;
+		return signature[1] == 0x92 || signature[1] == 0x91 ? 1 : 7;
+	}
+	if (index == 3) return signature[1] <= 0x92 ? 3 : 0x3f;
+	return 0xff;
+}
 
 static void apply_pending()
 {
@@ -160,7 +172,8 @@ static uint8_t read_status(uint8_t index)
 {
 	update_pending();
 	if (write_model) assert(pending == Pending::None);
-	uint8_t mask = index == 2 ? (signature[1] == 0x92 ? 1 : 7) : index == 3 ? (signature[1] == 0x92 ? 3 : 0x3f) : 0xff;
+	uint8_t mask = status_mask(index);
+	assert(mask); // Never issue an extended-fuse read to a chip without one.
 	return reserved_zero ? status[index] & mask : status[index];
 }
 
@@ -181,17 +194,19 @@ static uint8_t universal(std::vector<uint8_t> const &packet)
 		assert(packet[3] == 0);
 		if (second == 0x80) start_pending(Pending::Erase);
 		else if (second == 0xe0) {
-			uint8_t mask = signature[1] == 0x92 ? 3 : 0x3f;
+			uint8_t mask = status_mask(3);
 			assert((packet[4] | mask) == 0xff);
 			pending_value = packet[4];
 			start_pending(Pending::Lock);
 		} else {
 			assert(second == 0xa0 || second == 0xa8 || second == 0xa4);
 			pending_fuse = second == 0xa0 ? 0 : second == 0xa8 ? 1 : 2;
-			assert(pending_fuse != 2 || !is_atmega8());
-			uint8_t mask = pending_fuse == 2 ? (signature[1] == 0x92 ? 1 : 7) : 0xff;
+			uint8_t mask = status_mask(pending_fuse);
+			assert(mask);
 			assert((packet[4] | mask) == 0xff);
-			assert(pending_fuse != 1 || !((packet[4] ^ status[1]) & 0x20));
+			uint8_t spien_fuse = is_attiny13a() ? 0 : 1;
+			uint8_t spien_mask = is_attiny13a() ? 0x80 : 0x20;
+			assert(pending_fuse != spien_fuse || !((packet[4] ^ status[spien_fuse]) & spien_mask));
 			pending_value = packet[4];
 			start_pending(Pending::Fuse);
 		}
@@ -531,6 +546,7 @@ static void test_avrisp_sessions(Connection *connection)
 		TargetDefinition const *target;
 		uint8_t code, page_bytes, eeprom_hi, eeprom_lo, flash_hi, flash_lo, fuse_bytes;
 		uint16_t last_word;
+		uint8_t pagel = 0xd7, bs2 = 0xc2;
 	};
 	TargetCase const cases[] = {
 		{&TargetATmega8, 0x70, 64, 2, 0, 0x20, 0, 2, 0x0fe0},
@@ -538,6 +554,8 @@ static void test_avrisp_sessions(Connection *connection)
 		{&TargetATmega88, 0x73, 64, 2, 0, 0x20, 0, 3, 0x0fe0},
 		{&TargetATmega168, 0x86, 128, 2, 0, 0x40, 0, 3, 0x1fc0},
 		{&TargetATmega328P, 0x86, 128, 4, 0, 0x80, 0, 3, 0x3fc0},
+		{&TargetATtiny2313, 0x23, 32, 0, 128, 8, 0, 3, 0x03f0, 0xd4, 0xd6},
+		{&TargetATtiny13A, 0x14, 32, 0, 64, 4, 0, 2, 0x01f0, 0, 0},
 	};
 	for (auto const &test : cases) {
 		for (int read_chunk : {1, 3, 256}) {
@@ -551,7 +569,7 @@ static void test_avrisp_sessions(Connection *connection)
 					0xff, 0xff, 0xff, 0xff, 0, test.page_bytes, test.eeprom_hi, test.eeprom_lo,
 					0, 0, test.flash_hi, test.flash_lo, 0x20};
 				assert(isp_test::packets[1] == expected);
-				assert(isp_test::packets[2] == (std::vector<uint8_t>{0x45, 5, 4, 0xd7, 0xc2, 1, 0x20}));
+				assert(isp_test::packets[2] == (std::vector<uint8_t>{0x45, 5, 4, test.pagel, test.bs2, 1, 0x20}));
 				assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x42, 0x45, 0x50}));
 				uint8_t signature[3], result;
 				assert(programmer.read_signature(signature));
@@ -721,7 +739,7 @@ static void test_avrisp_reads(Connection *connection)
 	std::string page_path = std::string(directory) + "/page.bin";
 	std::string hex_path = std::string(directory) + "/image.hex";
 	bool ok;
-	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p"}) {
+	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p", "attiny2313", "attiny13a"}) {
 		auto target = create_target(name);
 		auto const &definition = target->definition();
 		// Query uses the detected chip even with a conflicting explicit target.
@@ -925,6 +943,8 @@ static void reset_isp_write_model(TargetDefinition const &target)
 	isp_test::reset();
 	isp_test::write_model = true;
 	std::copy(target.signature, target.signature + 3, isp_test::signature.begin());
+	if (isp_test::is_attiny13a()) isp_test::status = {{0x6a, 0xff, 0xff, 0xff}};
+	else if (target.signature[1] == 0x91) isp_test::status = {{0x64, 0xdf, 0xff, 0xff}};
 	isp_test::status[3] = 0xff;
 }
 
@@ -948,7 +968,7 @@ static void test_avrisp_writes(Connection *connection)
 	char directory[] = "/tmp/avrhvpp-isp-writes-XXXXXX";
 	assert(mkdtemp(directory));
 	std::string path = std::string(directory) + "/page.bin";
-	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p"}) {
+	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p", "attiny2313", "attiny13a"}) {
 		auto target = create_target(name);
 		auto const &definition = target->definition();
 		bool ok;
@@ -1007,12 +1027,13 @@ static void test_avrisp_writes(Connection *connection)
 			arguments.insert(arguments.end(), {"-wl", "3c"});
 			if (explicit_target) arguments.insert(arguments.end(), {"-t", name});
 			assert(parse_arguments(arguments, &options, &operations));
-			uint8_t extended_value = std::string(name) == "atmega48" ? 0xfe : 0xf8;
-			std::string text = "fuse written: 0x63\nfuse written: 0xc9\n";
+			uint8_t extended_value = definition.isp.fuse_masks[2] == 1 ? 0xfe : 0xf8;
+			uint8_t high_value = isp_test::is_attiny13a() ? 0xe9 : 0xc9;
+			std::string text = std::string("fuse written: 0x63\nfuse written: ") + (high_value == 0xe9 ? "0xe9\n" : "0xc9\n");
 			if (extended) text += std::string("fuse written: ") + (extended_value == 0xfe ? "0xfe\n" : "0xf8\n");
 			text += "lock bits written: 0xfc\n";
 			assert(capture_output([&]() { return avrisp_perform(operations, connection, explicit_target ? &definition : nullptr); }, &ok) == text && ok);
-			assert(isp_test::status[0] == 0x63 && isp_test::status[1] == 0xc9 && isp_test::status[3] == 0xfc);
+			assert(isp_test::status[0] == 0x63 && isp_test::status[1] == high_value && isp_test::status[3] == 0xfc);
 			assert(!extended || isp_test::status[2] == extended_value);
 			assert(count_isp_instruction(0xac, 0xa0) == 1 && count_isp_instruction(0xac, 0xa8) == 1);
 			assert(count_isp_instruction(0xac, 0xa4) == (extended ? 1 : 0));
@@ -1031,7 +1052,9 @@ static void test_avrisp_writes(Connection *connection)
 			isp_test::status[3] = 0xfc;
 			Operation op;
 			op.command = lock ? CMD_WRITE_LOCK : CMD_WRITE_FUSE;
-			op.data = 1; op.value = lock ? 0xff : 0xf9; op.target = target.get();
+			op.data = isp_test::is_attiny13a() ? 0 : 1;
+			op.value = lock ? 0xff : isp_test::status[op.data] ^ (isp_test::is_attiny13a() ? 0x80 : 0x20);
+			op.target = target.get();
 			assert(capture_operation(op, connection, &ok, Device::AVRISP).empty() && !ok);
 			for (auto const &packet : isp_test::packets) assert(packet[0] != 0x56 || packet[1] != 0xac);
 			assert_isp_write_finished();
@@ -1167,7 +1190,7 @@ static void test_avrisp_hex(Connection *connection)
 	std::string source = std::string(directory) + "/input.hex";
 	std::string output = std::string(directory) + "/output.hex";
 	std::string invalid = std::string(directory) + "/invalid.hex";
-	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p"}) {
+	for (char const *name : {"atmega8", "atmega48", "atmega88", "atmega168", "atmega328p", "attiny2313", "attiny13a"}) {
 		auto target = create_target(name);
 		auto const &definition = target->definition();
 		uint32_t size = definition.flash_bytes();
@@ -1402,6 +1425,88 @@ static void test_query(Connection *connection)
 	assert(std::count(sent.begin(), sent.end(), CMD_READ_FUSE) == 1);
 	assert(std::find(sent.begin(), sent.end(), CMD_READ_LOCK) == sent.end());
 	assert(write_pulses == 0 && response.empty());
+}
+
+static void test_avrisp_only_targets(Connection *connection)
+{
+	struct TinyCase {
+		char const *name;
+		uint8_t signature1, signature2, high_mask, low_write_mask, high_write_mask;
+		uint16_t page_count;
+		bool extended;
+	};
+	for (auto const &test : {
+		TinyCase{"attiny2313", 0x91, 0x0a, 0xff, 0xff, 0xdf, 64, true},
+		TinyCase{"attiny13a", 0x90, 0x07, 0x1f, 0x7f, 0x1f, 32, false}}) {
+		auto target = create_target(test.name);
+		auto const &definition = target->definition();
+		assert(definition.signature[0] == 0x1e && definition.signature[1] == test.signature1 && definition.signature[2] == test.signature2);
+		assert(find_target_by_signature(0x1e, test.signature1, test.signature2) == &definition);
+		assert(!find_target_by_signature(0x1e, test.signature1, test.signature2 ^ 0x80));
+		assert(definition.flash_page_bytes == 32 && definition.flash_page_count == test.page_count);
+		assert(!definition.supports(CapabilityHvpp) && definition.isp.poll_ready);
+		assert(definition.isp.fuse_masks[0] == 0xff && definition.isp.fuse_masks[1] == test.high_mask);
+		assert(definition.isp.fuse_masks[2] == (test.extended ? 1 : 0) && definition.isp.lock_mask == 3);
+		assert(definition.isp.fuse_write_masks[0] == test.low_write_mask && definition.isp.fuse_write_masks[1] == test.high_write_mask);
+		// Every operation rejects a selected AVRISP-only target before opening the port,
+		// including the default device and options preceding --target/--device.
+		for (auto const &operation : std::vector<std::vector<std::string>>{
+			{"-q"}, {"-rs"}, {"-rfl"}, {"-rfh"}, {"-rfe"}, {"-rl"},
+			{"-wfl", "63"}, {"-wfh", "c9"}, {"-wfe", "00"}, {"-wl", "fc"}, {"--chip-erase"},
+			{"--read-page", "0", "/unused"}, {"--write-page", "0", "/unused"},
+			{"--read-hex", "/unused"}, {"--write-hex", "/unused"}, {"--dump-buffer"}, {"--debug"}}) {
+			for (bool explicit_device : {false, true}) {
+				isp_test::reset();
+				std::vector<std::string> arguments = {"avrhvpp"};
+				arguments.insert(arguments.end(), operation.begin(), operation.end());
+				arguments.insert(arguments.end(), {"--target", test.name});
+				if (explicit_device) arguments.insert(arguments.end(), {"--device", "hvpp"});
+				std::vector<char *> argv;
+				for (auto &argument : arguments) argv.push_back(argument.data());
+				assert(avrhvpp_main((int)argv.size(), argv.data()) != 0);
+				assert(isp_test::open_calls == 0 && isp_test::commands.empty());
+			}
+		}
+		// An unselected HVPP query may identify the chip, but must not read its fuses.
+		isp_test::enabled = false;
+		reset(); signature1 = test.signature1; signature2 = test.signature2;
+		bool ok;
+		auto text = capture_output([&]() { return hvpp_query(connection); }, &ok);
+		assert(!ok && text.find(std::string("chip: ") + definition.display_name) != std::string::npos);
+		assert(fuse_reads.empty() && write_pulses == 0);
+		// Completion failures must stop subsequent operations for the new targets too.
+		for (bool timeout : {false, true}) {
+			reset_isp_write_model(definition);
+			isp_test::forever_busy = timeout;
+			isp_test::ignore_write = !timeout;
+			Avrisp programmer(connection, 20, 5);
+			assert(programmer.begin(&definition));
+			assert(!programmer.write_fuse(0, 0x63));
+			uint8_t signature[3];
+			assert(!programmer.read_signature(signature));
+			assert(!programmer.finish());
+			assert(count_isp_instruction(0xac, 0xa0) == 1);
+			assert(std::count(isp_test::commands.begin(), isp_test::commands.end(), 0x75) == 0);
+			assert_isp_write_finished();
+		}
+	}
+	// ATtiny13A has no extended fuse, with or without an explicit target.
+	for (char const *option : {"-rfe", "-wfe"}) {
+		for (bool explicit_target : {false, true}) {
+			reset_isp_write_model(TargetATtiny13A);
+			std::vector<std::string> arguments = {"avrhvpp", "-d", "avrisp", option};
+			if (std::string(option) == "-wfe") arguments.push_back("00");
+			arguments.push_back("-rs");
+			if (explicit_target) arguments.insert(arguments.end(), {"-t", "attiny13a"});
+			std::vector<char *> argv;
+			for (auto &argument : arguments) argv.push_back(argument.data());
+			assert(avrhvpp_main((int)argv.size(), argv.data()) != 0);
+			assert(count_isp_instruction(0x50, 8) == 0 && count_isp_instruction(0xac, 0xa4) == 0);
+			assert(std::count(isp_test::commands.begin(), isp_test::commands.end(), 0x75) == (explicit_target ? 0 : 1));
+			assert(isp_test::open_calls == (explicit_target ? 0 : 1) && !isp_test::programming);
+		}
+	}
+	isp_test::enabled = false;
 }
 
 static void test_targets(Connection *connection)
@@ -1742,6 +1847,7 @@ int main()
 	}
 	test_targets(&connection);
 	test_query(&connection);
+	test_avrisp_only_targets(&connection);
 	test_avrisp(&connection);
 	test_avrisp_sessions(&connection);
 	test_avrisp_variable_failures(&connection);

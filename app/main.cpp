@@ -577,7 +577,7 @@ bool avr_fetch_status(Command command, uint8_t address, size_t bytes, std::vecto
 }
 
 template <typename ReadStatus, typename Emit>
-bool query_target(ReadStatus read_status, Emit emit)
+bool query_target(ReadStatus read_status, Emit emit, bool hvpp)
 {
 	std::vector<uint8_t> signature;
 	if (!read_status(CMD_READ_SIGNATURE, 0, 3, &signature)) return false;
@@ -594,6 +594,10 @@ bool query_target(ReadStatus read_status, Emit emit)
 		target->display_name, (unsigned int)target->flash_page_bytes,
 		(unsigned int)target->flash_page_count, (unsigned long)target->flash_bytes());
 	emit(text);
+	if (hvpp && !target->supports(CapabilityHvpp)) {
+		fprintf(stderr, "%s requires --device avrisp; HVPP is not supported\n", target->display_name);
+		return false;
+	}
 	struct Field {
 		TargetCapability capability;
 		char const *label;
@@ -621,7 +625,7 @@ bool hvpp_query(Connection *conn)
 {
 	return query_target([&](Command command, uint8_t address, size_t bytes, std::vector<uint8_t> *data) {
 		return avr_fetch_status(command, address, bytes, data, conn);
-	}, [](char const *text) { fputs(text, stdout); });
+	}, [](char const *text) { fputs(text, stdout); }, true);
 }
 
 bool hvpp_read_status(Operation const &op, Connection *conn)
@@ -1392,7 +1396,7 @@ bool avrisp_read_operation(Operation const &op, Avrisp *programmer, TargetDefini
 	if (op.command == _CMD_QUERY) {
 		return query_target([&](Command command, uint8_t address, size_t bytes, std::vector<uint8_t> *data) {
 			return avrisp_fetch_status(programmer, command, address, bytes, data);
-		}, [&](char const *part) { *text += part; });
+		}, [&](char const *part) { *text += part; }, false);
 	}
 	if (op.command == CMD_READ_PAGE || op.command == _CMD_READ_HEX) {
 		return avrisp_flash_operation(op, programmer, text);
@@ -1627,7 +1631,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 				return false;
 			}
 			if (argi >= argc || argv[argi][0] == '-') {
-				fprintf(stderr, "%.*s requires a target name (atmega8, atmega48, atmega88, atmega168, atmega328p)\n", (int)arg.size(), arg.data());
+				fprintf(stderr, "%.*s requires a target name (atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a)\n", (int)arg.size(), arg.data());
 				return false;
 			}
 			target_name = argv[argi++];
@@ -1666,7 +1670,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 	if (target_specified) {
 		opts->target = create_target(target_name);
 		if (!opts->target) {
-			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega48, atmega88, atmega168, atmega328p)\n", (int)target_name.size(), target_name.data());
+			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a)\n", (int)target_name.size(), target_name.data());
 			return false;
 		}
 	}
@@ -1675,6 +1679,10 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 
 bool build_operations(Options const &opts, std::vector<OperationArguments> const &pending, std::vector<Operation> *operations)
 {
+	if (opts.device == Device::HVPP && opts.target && !opts.target->definition().supports(CapabilityHvpp)) {
+		fprintf(stderr, "%s requires --device avrisp; HVPP is not supported\n", opts.target->definition().display_name);
+		return false;
+	}
 	for (OperationArguments const &arguments : pending) {
 		OperationOption const &option = *arguments.option;
 		if (opts.device == Device::AVRISP && !avrisp_supports(option.command)) {

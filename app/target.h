@@ -44,6 +44,12 @@ inline std::unique_ptr<Target> create_target(std::string_view name)
 	if (name == "atmega328p") {
 		return std::make_unique<Target>(TargetATmega328P, "atmega328p");
 	}
+	if (name == "attiny2313") {
+		return std::make_unique<Target>(TargetATtiny2313, "attiny2313");
+	}
+	if (name == "attiny13a") {
+		return std::make_unique<Target>(TargetATtiny13A, "attiny13a");
+	}
 	return nullptr;
 }
 
