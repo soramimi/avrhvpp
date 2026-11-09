@@ -91,13 +91,88 @@ void AVRHVPP::write_byte(char c)
 }
 void AVRHVPP::write_string(char const *text) { while (*text) write_byte(*text++); }
 
+namespace isp_test {
+enum class Fault { None, Header, Status, Truncated, Read };
+static bool enabled, programming, read_error, zero_write;
+static int read_chunk, write_chunk, write_calls, fail_write_call, faults_left, open_calls;
+static uint8_t fault_command;
+static Fault fault;
+static std::vector<uint8_t> packet, commands;
+static std::deque<uint8_t> replies;
+
+static void reset()
+{
+	enabled = true;
+	programming = read_error = zero_write = false;
+	read_chunk = 1;
+	write_chunk = 1;
+	write_calls = fail_write_call = faults_left = open_calls = 0;
+	fault_command = 0;
+	fault = Fault::None;
+	packet.clear(); commands.clear(); replies.clear();
+}
+
+static int write(uint8_t const *bytes, int size)
+{
+	if (++write_calls == fail_write_call) return zero_write ? 0 : -1;
+	int count = std::min(size, write_chunk);
+	for (int i = 0; i < count; i++) {
+		packet.push_back(bytes[i]);
+		if (bytes[i] != 0x20) continue;
+		if (packet.size() != 2) {
+			replies.push_back(0x15);
+			packet.clear();
+			continue;
+		}
+		uint8_t command = packet[0];
+		commands.push_back(command);
+		packet.clear();
+		if (command == 0x50) programming = true;
+		if (command == 0x51) programming = false;
+		std::vector<uint8_t> reply = {0x14};
+		if (command == 0x75) {
+			assert(programming);
+			reply.insert(reply.end(), {0x1e, 0x95, 0x0f});
+		}
+		reply.push_back(0x10);
+		if (command == fault_command && faults_left > 0) {
+			--faults_left;
+			switch (fault) {
+			case Fault::Header: reply[0] = 0x15; break;
+			case Fault::Status: reply.back() = 0x11; break;
+			case Fault::Truncated: reply.resize(command == 0x75 ? 3 : 1); break;
+			case Fault::Read: read_error = true; break;
+			case Fault::None: break;
+			}
+		}
+		replies.insert(replies.end(), reply.begin(), reply.end());
+	}
+	return count;
+}
+
+static int read(uint8_t *bytes, int size)
+{
+	if (read_error) {
+		read_error = false;
+		return -1;
+	}
+	int count = std::min({size, read_chunk, (int)replies.size()});
+	for (int i = 0; i < count; i++) {
+		bytes[i] = replies.front();
+		replies.pop_front();
+	}
+	return count;
+}
+}
+
 Serial::Serial() {}
-bool Serial::open(Option *) { assert(false); return false; }
+bool Serial::open(Option *) { ++isp_test::open_calls; assert(isp_test::enabled); return true; }
 void Serial::cancel() {}
 void Serial::close() {}
 int Serial::write(void const *pointer, int length)
 {
 	auto bytes = static_cast<uint8_t const *>(pointer);
+	if (isp_test::enabled) return isp_test::write(bytes, length);
 	for (int i = 0; i < length; ++i) {
 		assert(bytes[i] >= 0x40);
 		sent.push_back(bytes[i]);
@@ -116,6 +191,7 @@ int Serial::write(void const *pointer, int length)
 }
 int Serial::read(void *pointer, int length, int)
 {
+	if (isp_test::enabled) return isp_test::read(static_cast<uint8_t *>(pointer), length);
 	if (!length || response.empty()) return 0;
 	*static_cast<char *>(pointer) = response.front();
 	response.pop_front();
@@ -159,14 +235,15 @@ static bool parse_arguments(std::vector<std::string> arguments, Options *options
 		&& build_operations(*options, pending, operations);
 }
 
-static std::string capture_operation(Operation const &operation, Connection *connection, bool *ok)
+template <typename Callable>
+static std::string capture_output(Callable call, bool *ok)
 {
 	assert(fflush(stdout) == 0);
 	int saved_stdout = dup(STDOUT_FILENO);
 	FILE *output = tmpfile();
 	assert(saved_stdout >= 0 && output);
 	assert(dup2(fileno(output), STDOUT_FILENO) >= 0);
-	*ok = perform(operation, connection);
+	*ok = call();
 	assert(fflush(stdout) == 0);
 	assert(dup2(saved_stdout, STDOUT_FILENO) >= 0);
 	close(saved_stdout);
@@ -176,6 +253,109 @@ static std::string capture_operation(Operation const &operation, Connection *con
 	assert(fread(text.data(), 1, text.size(), output) == text.size());
 	fclose(output);
 	return text;
+}
+
+static std::string capture_operation(Operation const &operation, Connection *connection, bool *ok, Device device = Device::HVPP)
+{
+	return capture_output([&]() { return perform(device, operation, connection); }, ok);
+}
+
+static void test_avrisp(Connection *connection)
+{
+	for (int read_chunk : {1, 2, 8}) {
+		for (int write_chunk : {1, 2}) {
+			isp_test::reset();
+			isp_test::read_chunk = read_chunk;
+			isp_test::write_chunk = write_chunk;
+			Operation operation;
+			operation.command = CMD_READ_SIGNATURE;
+			bool ok;
+			assert(capture_operation(operation, connection, &ok, Device::AVRISP) == "0x1e, 0x95, 0x0f\n" && ok);
+			assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x50, 0x75, 0x51}));
+			assert(!isp_test::programming);
+			assert(connection->mode() == Connection::STK500);
+		}
+	}
+	for (uint8_t command : {0x30, 0x50, 0x75, 0x51}) {
+		for (auto fault : {isp_test::Fault::Header, isp_test::Fault::Status, isp_test::Fault::Truncated, isp_test::Fault::Read}) {
+			isp_test::reset();
+			isp_test::fault_command = command;
+			isp_test::fault = fault;
+			isp_test::faults_left = command == 0x30 ? 3 : 1;
+			Avrisp programmer(connection, 3);
+			uint8_t signature[3];
+			assert(!programmer.read_signature(signature));
+			assert(!isp_test::programming);
+			if (command == 0x30) {
+				assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x30, 0x30}));
+			} else {
+				assert(isp_test::commands.back() == 0x51);
+			}
+			if (command == 0x50 || command == 0x75) assert(isp_test::replies.empty());
+		}
+	}
+	isp_test::reset();
+	isp_test::fault_command = 0x30;
+	isp_test::fault = isp_test::Fault::Header;
+	isp_test::faults_left = 1;
+	Avrisp retrying(connection, 3);
+	uint8_t signature[3];
+	assert(retrying.read_signature(signature));
+	assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x30, 0x50, 0x75, 0x51}));
+	for (int failed_call : {1, 2}) {
+		isp_test::reset();
+		isp_test::fail_write_call = failed_call;
+		Avrisp programmer(connection, 3);
+		assert(programmer.read_signature(signature));
+		assert(!isp_test::programming);
+	}
+	for (int failed_call : {4, 6, 8}) {
+		for (bool zero : {false, true}) {
+			isp_test::reset();
+			isp_test::fail_write_call = failed_call;
+			isp_test::zero_write = zero;
+			Avrisp programmer(connection, 3);
+			assert(!programmer.read_signature(signature));
+			assert(!isp_test::programming); // A partial Q is completed, then retried.
+		}
+	}
+	for (auto const &arguments : std::vector<std::vector<std::string>>{
+		{"avrhvpp", "-d", "typo", "--chip-erase"},
+		{"avrhvpp", "--device"}, {"avrhvpp", "-d", "--read-signature"},
+		{"avrhvpp", "-d", "avrisp", "--device", "hvpp", "-rs"},
+		{"avrhvpp", "--device", "avrisp", "--query"},
+		{"avrhvpp", "-rs", "--chip-erase", "-d", "avrisp"},
+		{"avrhvpp", "--write-hex", "/missing.hex", "-d", "avrisp"}}) {
+		isp_test::reset();
+		Options options;
+		std::vector<Operation> operations;
+		assert(!parse_arguments(arguments, &options, &operations));
+		auto strings = arguments;
+		std::vector<char *> argv;
+		for (auto &argument : strings) argv.push_back(argument.data());
+		assert(avrhvpp_main((int)argv.size(), argv.data()) != 0);
+		assert(isp_test::open_calls == 0 && isp_test::commands.empty());
+	}
+	for (bool trailing : {false, true}) {
+		Options options;
+		std::vector<Operation> operations;
+		assert(parse_arguments(trailing ? std::vector<std::string>{"avrhvpp", "--port", "unused", "-rs", "-d", "avrisp"}
+			: std::vector<std::string>{"avrhvpp", "--device", "avrisp", "-p", "unused", "--read-signature"}, &options, &operations));
+		assert(options.device == Device::AVRISP && options.serial_options.port == "unused");
+		assert(operations.size() == 1 && operations[0].command == CMD_READ_SIGNATURE);
+	}
+	isp_test::reset();
+	isp_test::fault_command = 0x75;
+	isp_test::fault = isp_test::Fault::Header;
+	isp_test::faults_left = 1;
+	std::vector<std::string> arguments = {"avrhvpp", "-d", "avrisp", "-rs", "-rs"};
+	std::vector<char *> argv;
+	for (auto &argument : arguments) argv.push_back(argument.data());
+	bool ok;
+	assert(capture_output([&]() { return avrhvpp_main((int)argv.size(), argv.data()) == 0; }, &ok).empty() && !ok);
+	assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x50, 0x75, 0x51}));
+	assert(!isp_test::programming);
+	isp_test::enabled = false;
 }
 
 static void test_query(Connection *connection)
@@ -306,7 +486,7 @@ static void test_targets(Connection *connection)
 			assert(!parse_arguments(arguments, &options, &operations));
 		}
 		reset();
-		assert(avr_write_page(reference[1], connection));
+		assert(hvpp_write_page(reference[1], connection));
 		assert(std::equal(payload.begin(), payload.end(), flash.begin() + last_page * page_bytes));
 		for (uint16_t page : {uint16_t(0), uint16_t(256 / definition.flash_page_words() - 1),
 			uint16_t(256 / definition.flash_page_words()), last_page}) {
@@ -317,9 +497,9 @@ static void test_targets(Connection *connection)
 			assert(actual.size() == page_bytes && std::equal(actual.begin(), actual.end(), flash.begin() + offset));
 		}
 		reset();
-		assert(avr_write_hex(reference[2], connection));
+		assert(hvpp_write_hex(reference[2], connection));
 		assert(write_pulses == 1 && flash[capacity - 1] == 0x5a);
-		assert(avr_write_hex(reference[2], connection));
+		assert(hvpp_write_hex(reference[2], connection));
 		assert(write_pulses == 1); // Matching page skips writing.
 		reset();
 		Operation conflict = reference[2];
@@ -329,14 +509,14 @@ static void test_targets(Connection *connection)
 		conflict.bytes[0] = 0x11;
 		conflict.bytes[page_bytes] = 0x22;
 		flash[page_bytes] = 0x33;
-		assert(!avr_write_hex(conflict, connection));
+		assert(!hvpp_write_hex(conflict, connection));
 		assert(write_pulses == 0 && flash[0] == 0xff); // No partial writes before conflict.
 		assert(std::find(sent.begin(), sent.end(), CMD_WRITE_PAGE) == sent.end());
 		reset();
 		flash.fill(0x33);
 		Operation erased = reference[2];
 		erased.chip_erase = true;
-		assert(avr_write_hex(erased, connection));
+		assert(hvpp_write_hex(erased, connection));
 		assert(write_pulses == 2 && flash[0] == 0xff && flash[capacity - 1] == 0x5a);
 		reset();
 		flash[0] = 0x12; flash[capacity - 1] = 0x34;
@@ -344,7 +524,7 @@ static void test_targets(Connection *connection)
 		read_hex.command = _CMD_READ_HEX;
 		read_hex.target = target.get();
 		read_hex.path = output_path;
-		assert(avr_read_hex(read_hex, connection));
+		assert(hvpp_read_hex(read_hex, connection));
 		std::vector<uint8_t> image, mask;
 		assert(read_hex_file(output_path.c_str(), *target, &image, &mask));
 		assert(image.size() == capacity && std::equal(image.begin(), image.end(), flash.begin()));
@@ -481,7 +661,7 @@ int main()
 	last_page.target = target.get();
 	last_page.data = 255;
 	last_page.bytes.assign(128, 0xa5);
-	assert(avr_write_page(last_page, &connection));
+	assert(hvpp_write_page(last_page, &connection));
 	assert(std::equal(last_page.bytes.begin(), last_page.bytes.end(), flash.begin() + 0x7f80));
 
 	for (int failure = 0; failure < 4; ++failure) {
@@ -525,7 +705,7 @@ int main()
 	Operation lock;
 	lock.command = CMD_WRITE_LOCK;
 	lock.value = 0xfc;
-	assert(avr_write_lock(lock, &connection));
+	assert(hvpp_write_lock(lock, &connection));
 	assert(lock_value == 0xfc && write_pulses == 1);
 	reset();
 	reject_latch = true;
@@ -533,7 +713,7 @@ int main()
 	page.command = CMD_WRITE_PAGE;
 	page.target = target.get();
 	page.bytes.assign(128, 0);
-	assert(!avr_write_page(page, &connection));
+	assert(!hvpp_write_page(page, &connection));
 	assert(std::find(sent.begin(), sent.end(), CMD_WRITE_PAGE) == sent.end());
 	assert(write_pulses == 0);
 	reset();
@@ -592,5 +772,6 @@ int main()
 	}
 	test_targets(&connection);
 	test_query(&connection);
+	test_avrisp(&connection);
 	puts("Protocol integration and boundary tests passed without hardware.");
 }

@@ -102,6 +102,16 @@ avrdude -c avrisp -P /dev/ttyACM0 -b 19200 -p atmega328p -U flash:w:foo.hex
 
 ### AVRHVPP モード（高電圧パラレル）
 
+ホストのプログラマ種別は`-d <device>` / `--device <device>`で指定します。既定の`hvpp`では従来のHVPP操作を使用できます。`avrisp`ではSTK500v1経由の`--read-signature`（`-rs`）だけに対応します。
+
+```sh
+./avrhvpp --port /dev/ttyACM0 --device avrisp --read-signature
+```
+
+AVRISPの送受信は分割されても全バイトが揃うまで処理し、応答の`STK_INSYNC`と`STK_OK`を検証します。同期は最大3回試し、各応答は1秒の期限で読み取ります。モード移行を試みた後は、失敗時も終了コマンドを送信し、終了処理に失敗した場合はフレームを整えて一度だけ再試行します。読み取りと終了処理がともに成功した場合だけシグネチャを表示します。
+
+不明なプログラマ種別、種別の重複指定、AVRISPで未対応の操作は接続前に拒否します。`--device`の位置にかかわらず、全操作の検証が済んでから接続します。
+
 ```sh
 ./avrhvpp -p /dev/ttyACM0 --read-signature      # シグネチャを読み出し
 ./avrhvpp -p /dev/ttyACM0 --query              # チップを検出し、対応するヒューズとロックビットを表示
@@ -148,7 +158,8 @@ lock bits: 0xfc
 
 | オプション | 内容 |
 |---|---|
-| `-p <port>` | シリアルポート（Windows では `COM3` など） |
+| `-p <port>`, `--port <port>` | シリアルポート（Windows では `COM3` など） |
+| `-d <device>`, `--device <device>` | プログラマ種別（既定`hvpp`、`avrisp`はシグネチャ読み取りのみ） |
 | `-t <target>`, `--target <target>` | ターゲットを選択（`atmega8`、`atmega48`、`atmega88`、`atmega168`、`atmega328p`）。Flashページ／HEX操作では必須 |
 | `-s <speed>`, `--speed <speed>` | ボーレート（既定 115200。USB CDC なので通常は無関係） |
 | `--debug` | 予約済みのデバッグコマンドを送る。ファームウェア側の処理は現在無効で、応答しない |

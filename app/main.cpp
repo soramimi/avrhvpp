@@ -130,7 +130,6 @@ public:
 		STK500,
 		BITBANG,
 		AVRHVPP,
-		AVRISP,
 	};
 	Mode mode_ = STK500;
 	Mode mode() const
@@ -197,8 +196,13 @@ public:
 	}
 };
 
+enum class Device {
+	HVPP,
+	AVRISP,
+};
+
 struct Options {
-	Connection::Mode device = Connection::Mode::AVRHVPP;
+	Device device = Device::HVPP;
 	Serial::Option serial_options;
 	std::unique_ptr<Target> target;
 	bool chip_erase_before_write_hex = true;
@@ -215,16 +219,17 @@ struct Operation {
 	Target const *target = nullptr;
 };
 
-Connection::Mode parse_device_type(std::string_view name)
+bool parse_device_type(std::string_view name, Device *device)
 {
 	if (name == "hvpp") {
-		return Connection::Mode::AVRHVPP;
+		*device = Device::HVPP;
 	} else if (name == "avrisp") {
-		return Connection::Mode::AVRISP;
+		*device = Device::AVRISP;
 	} else {
-		fprintf(stderr, "unknown device type: %.*s\n", (int)name.size(), name.data());
-		return Connection::Mode::AVRHVPP;
+		fprintf(stderr, "unknown device type: %.*s (available: hvpp, avrisp)\n", (int)name.size(), name.data());
+		return false;
 	}
+	return true;
 }
 
 bool parse_byte(char const *text, uint8_t *value)
@@ -922,66 +927,162 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 	}
 }
 
-bool avrisp_read_signature(Connection *conn)
-{
-	char tmp[10];
-	int n;
-	conn->write("P\x20", 2);
-	n = conn->read(tmp, sizeof(tmp), 100);
-	if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) { // STK_INSYNC && STK_OK
-		// pass
-	} else {
-		fprintf(stderr, "failed to enter programming mode\n");
+class Avrisp {
+private:
+	enum : uint8_t {
+		GetSync = 0x30,
+		EnterProgramming = 0x50,
+		LeaveProgramming = 0x51,
+		ReadSignature = 0x75,
+		EndOfPacket = 0x20,
+		InSync = 0x14,
+		Ok = 0x10,
+	};
+	Connection *conn_;
+	int timeout_;
+	char const *error_ = nullptr;
+
+	bool write_all(uint8_t const *data, int size)
+	{
+		while (size > 0) {
+			int n = conn_->write(data, size);
+			if (n <= 0 || n > size) {
+				error_ = "write failed";
+				return false;
+			}
+			data += n;
+			size -= n;
+		}
+		return true;
+	}
+
+	bool read_exact(uint8_t *data, int size, std::chrono::steady_clock::time_point deadline)
+	{
+		while (size > 0) {
+			auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+			if (remain <= 0) {
+				error_ = "response timeout";
+				return false;
+			}
+			int n = conn_->read(data, size, (int)remain);
+			if (n < 0 || n > size) {
+				error_ = "read failed";
+				return false;
+			}
+			data += n;
+			size -= n;
+		}
+		return true;
+	}
+
+	bool discard_input()
+	{
+		uint8_t bytes[64];
+		for (int total = 0; total < 256;) {
+			int n = conn_->read(bytes, sizeof(bytes), 0);
+			if (n == 0) return true;
+			if (n < 0) {
+				error_ = "read failed";
+				return false;
+			}
+			total += n;
+		}
+		error_ = "unexpected input during synchronization";
 		return false;
 	}
-	conn->write("\x75\x20", 2);
-	n = conn->read(tmp, sizeof(tmp), 100);
-	if (n == 5) {
-		if (tmp[0] == 0x14) { // STK_INSYNC
-			if (tmp[4] == 0x10) { // STK_OK
-				std::string text;
-				char const *ptr = tmp + 1;
-				size_t len = 3;
-				for (size_t i = 0; i < len; i++) {
-					if (i > 0) {
-						text += ", ";
-					}
-					char tmp2[10];
-					sprintf(tmp2, "0x%02x", (unsigned char)ptr[i]);
-					text += tmp2;
-				}
-				puts(text.c_str());
+
+	bool exchange(uint8_t command, uint8_t *data, int size)
+	{
+		uint8_t request[] = {command, EndOfPacket};
+		if (!write_all(request, sizeof(request))) return false;
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_);
+		uint8_t status;
+		if (!read_exact(&status, 1, deadline)) return false;
+		if (status != InSync) {
+			error_ = "expected STK_INSYNC";
+			return false;
+		}
+		if (!read_exact(data, size, deadline) || !read_exact(&status, 1, deadline)) return false;
+		if (status != Ok) {
+			error_ = "expected STK_OK";
+			return false;
+		}
+		return true;
+	}
+
+	void report_error(char const *operation) const
+	{
+		fprintf(stderr, "AVRISP %s: %s\n", operation, error_);
+	}
+
+	void recover_frame()
+	{
+		// Complete any partial request and discard the failed response.
+		uint8_t end = EndOfPacket;
+		write_all(&end, 1);
+		discard_input();
+	}
+public:
+	explicit Avrisp(Connection *conn, int timeout = COMMAND_TIMEOUT_MS)
+		: conn_(conn)
+		, timeout_(timeout)
+	{
+	}
+
+	bool read_signature(uint8_t *signature)
+	{
+		bool synced = false;
+		for (int attempt = 0; attempt < 3; attempt++) {
+			if (!discard_input()) break;
+			if (exchange(GetSync, nullptr, 0)) {
+				synced = true;
+				conn_->mode_ = Connection::STK500;
+				break;
 			}
 		}
+		if (!synced) {
+			report_error("synchronize");
+			return false;
+		}
+		bool ok = exchange(EnterProgramming, nullptr, 0);
+		if (!ok) report_error("enter programming mode");
+		if (ok) {
+			ok = exchange(ReadSignature, signature, 3);
+			if (!ok) report_error("read signature");
+		}
+		if (!ok) {
+			recover_frame();
+		}
+		bool left = exchange(LeaveProgramming, nullptr, 0);
+		if (!left) {
+			report_error("leave programming mode");
+			recover_frame();
+			if (!exchange(LeaveProgramming, nullptr, 0)) report_error("retry leaving programming mode");
+		}
+		return ok && left;
 	}
-	
-	conn->write("Q\x20", 2);
-	n = conn->read(tmp, sizeof(tmp), 100);
-	if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) { // STK_INSYNC && STK_OK
-		// pass
-	} else {
-		fprintf(stderr, "failed to enter programming mode\n");
-		return false;
-	}
-	
-	return true;
-}
+};
 
 bool avrisp_perform(Operation const &op, Connection *conn)
 {
-	if (!conn->sync()) {
-		fprintf(stderr, "failed to sync with AVRISP\n");
+	if (op.command != CMD_READ_SIGNATURE) {
+		fprintf(stderr, "AVRISP supports only --read-signature\n");
 		return false;
 	}
-	if (op.command == CMD_READ_SIGNATURE) {
-		return avrisp_read_signature(conn);
+	uint8_t signature[3];
+	Avrisp programmer(conn);
+	if (!programmer.read_signature(signature)) return false;
+	printf("0x%02x, 0x%02x, 0x%02x\n", signature[0], signature[1], signature[2]);
+	return true;
+}
+
+bool perform(Device device, Operation const &op, Connection *conn)
+{
+	switch (device) {
+	case Device::HVPP: return hvpp_perform(op, conn);
+	case Device::AVRISP: return avrisp_perform(op, conn);
 	}
-	
-	// not implemented yet
-	
-	
-	
-	
+	fprintf(stderr, "unsupported device type\n");
 	return false;
 }
 
@@ -1046,6 +1147,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 	opts->serial_options.speed = 115200;
 	std::string_view target_name;
 	bool target_specified = false;
+	bool device_specified = false;
 
 	int argi = 1;
 	while (argi < argc) {
@@ -1058,13 +1160,16 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 				return false;
 			}
 		} else if (arg == "-d" || arg == "--device") {
-			if (argi < argc) {
-				std::string_view name = argv[argi++];
-				opts->device = parse_device_type(name);
-			} else {
-				fprintf(stderr, "-d requires a device name\n");
+			if (device_specified) {
+				fprintf(stderr, "device specified more than once\n");
 				return false;
 			}
+			if (argi >= argc || argv[argi][0] == '-') {
+				fprintf(stderr, "%.*s requires a device name (hvpp, avrisp)\n", (int)arg.size(), arg.data());
+				return false;
+			}
+			if (!parse_device_type(argv[argi++], &opts->device)) return false;
+			device_specified = true;
 		} else if (arg == "--no-chip-erase") {
 			opts->chip_erase_before_write_hex = false;
 		} else if (arg == "-t" || arg == "--target") {
@@ -1123,6 +1228,10 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 {
 	for (OperationArguments const &arguments : pending) {
 		OperationOption const &option = *arguments.option;
+		if (opts.device == Device::AVRISP && option.command != CMD_READ_SIGNATURE) {
+			fprintf(stderr, "%.*s is not supported with --device avrisp; only --read-signature is available\n", (int)option.name.size(), option.name.data());
+			return false;
+		}
 		Operation operation;
 		operation.command = option.command;
 		operation.data = option.data;
@@ -1194,18 +1303,7 @@ int main(int argc, char **argv)
 	}
 
 	for (Operation const &operation : operations) {
-		if (opts.device == Connection::Mode::AVRHVPP) {
-			if (!hvpp_perform(operation, &conn)) {
-				conn.close();
-				return 1;
-			}
-		} else if (opts.device == Connection::Mode::AVRISP) {
-			if (!avrisp_perform(operation, &conn)) {
-				conn.close();
-				return 1;
-			}
-		} else {
-			fprintf(stderr, "unsupported device type\n");
+		if (!perform(opts.device, operation, &conn)) {
 			conn.close();
 			return 1;
 		}
