@@ -9,4 +9,14 @@ uint8_t fake_pind();
 #define PINB fake_pinb()
 #define PIND fake_pind()
 
+#ifdef TEST_STK500
+extern uint8_t SPCR, SPSR, CLKPR, MCUCR, TCCR0B, TIMSK0;
+constexpr uint8_t TOIE0 = 0;
+struct FakeSpiRegister {
+	void operator=(uint8_t value);
+	operator uint8_t() const;
+};
+extern FakeSpiRegister SPDR;
+#endif
+
 #endif

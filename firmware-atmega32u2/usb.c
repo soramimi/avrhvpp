@@ -1,5 +1,5 @@
 // USB CDC-ACM for ATMEGA32U2
-// Copyright (C) 2022 S.Fuchita (@soramimi_jp)
+// Copyright (C) 2026 S.Fuchita (@soramimi_jp)
 
 #define USB_SERIAL_PRIVATE_INCLUDE
 #include <avr/io.h>
