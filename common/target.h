@@ -12,12 +12,27 @@ enum TargetCapability : uint8_t {
 	CapabilityChipErase = 1 << 5,
 };
 
+struct IspParameters {
+	uint8_t device_code;
+	uint16_t eeprom_bytes;
+	uint8_t eeprom_page_bytes;
+	uint8_t pagel;
+	uint8_t bs2;
+	bool poll_ready;
+	uint8_t write_wait_ms;
+	uint8_t erase_wait_ms;
+	uint8_t fuse_masks[3];
+	uint8_t fuse_write_masks[3];
+	uint8_t lock_mask;
+};
+
 struct TargetDefinition {
 	char const *display_name;
 	uint8_t signature[3];
 	uint16_t flash_page_bytes;
 	uint16_t flash_page_count;
 	uint8_t capabilities;
+	IspParameters isp;
 
 	constexpr uint16_t flash_page_words() const
 	{
@@ -57,6 +72,7 @@ constexpr TargetDefinition TargetATmega8 = {
 		| CapabilityFuseHigh
 		| CapabilityLockBits
 		| CapabilityChipErase,
+	{0x70, 512, 4, 0xd7, 0xc2, false, 10, 20, {0xff, 0xff, 0}, {0xff, 0xdf, 0}, 0x3f},
 };
 
 constexpr TargetDefinition TargetATmega48 = {
@@ -70,6 +86,7 @@ constexpr TargetDefinition TargetATmega48 = {
 		| CapabilityFuseExtended
 		| CapabilityLockBits
 		| CapabilityChipErase,
+	{0x59, 256, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x01}, {0xff, 0xdf, 0x01}, 0x03},
 };
 
 constexpr TargetDefinition TargetATmega88 = {
@@ -83,6 +100,7 @@ constexpr TargetDefinition TargetATmega88 = {
 		| CapabilityFuseExtended
 		| CapabilityLockBits
 		| CapabilityChipErase,
+	{0x73, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
 };
 
 constexpr TargetDefinition TargetATmega168 = {
@@ -96,6 +114,7 @@ constexpr TargetDefinition TargetATmega168 = {
 		| CapabilityFuseExtended
 		| CapabilityLockBits
 		| CapabilityChipErase,
+	{0x86, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
 };
 
 constexpr TargetDefinition TargetATmega328P = {
@@ -109,6 +128,7 @@ constexpr TargetDefinition TargetATmega328P = {
 		| CapabilityFuseExtended
 		| CapabilityLockBits
 		| CapabilityChipErase,
+	{0x86, 1024, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
 };
 
 inline TargetDefinition const *find_target_by_signature(
