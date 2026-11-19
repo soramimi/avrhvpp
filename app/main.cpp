@@ -1013,6 +1013,17 @@ private:
 		}
 		return -1;
 	}
+
+	bool updi_STCS(uint8_t addr, uint8_t value)
+	{
+		if (addr > 0x0f) return false;
+		uint8_t tx[] = {0x55, (uint8_t)(0xc0 | addr), value};
+		uint8_t rx[10];
+		send_data(tx, sizeof(tx));
+		// STCS has no target response. Check the local echo of the three sent bytes.
+		int n = receive(rx, sizeof(rx), 5);
+		return n == 3 && memcmp(tx, rx, sizeof(tx)) == 0;
+	}
 public:
 	void setup(Connection *conn)
 	{
@@ -1052,6 +1063,12 @@ public:
 				fprintf(stderr, "failed to read UPDI register 0x%02x\n", (unsigned int)addr);
 			}
 		};
+
+		auto WriteControlStatus = [&](uint8_t addr, uint8_t value){
+			if (!updi_STCS(addr, value)) {
+				fprintf(stderr, "failed to verify STCS echo for UPDI register 0x%02x\n", (unsigned int)addr);
+			}
+		};
 		
 		auto SendBreak = [&](){
 			write_command(conn_, CMD_UPDI_BREAK);
@@ -1068,13 +1085,8 @@ public:
 		// for AVR64DD28
 
 #if 1
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc3); // STCS CTRLB (0x03), write the UPDI Control B register.
-		SendData(0x08); // CTRLB data, set CCDETDIS to disable collision and contention detection.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
-		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
-		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		WriteControlStatus(0x03, 0x08); // CTRLB, disable collision and contention detection (CCDETDIS).
+		WriteControlStatus(0x02, 0x80); // CTRLA, enable the inter-byte delay for multi-byte LD/LDS (IBDLY).
 		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
 		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
@@ -1083,22 +1095,14 @@ public:
 #endif
 
 #if 1
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc3); // STCS CTRLB (0x03), write the UPDI Control B register.
-		SendData(0x08); // CTRLB data, set CCDETDIS to disable collision and contention detection.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
-		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
-		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		WriteControlStatus(0x03, 0x08); // CTRLB, disable collision and contention detection (CCDETDIS).
+		WriteControlStatus(0x02, 0x80); // CTRLA, enable the inter-byte delay for multi-byte LD/LDS (IBDLY).
 		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
 		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 #endif
 
 #if 1
-		
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
-		SendData(0x59); // ASI_RESET_REQ data, assert system reset.
+		WriteControlStatus(0x08, 0x59); // ASI_RESET_REQ, assert system reset.
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
 		SendData(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
 		Receive(5);
@@ -1120,13 +1124,8 @@ public:
 #endif
 
 #if 1
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
-		SendData(0x59); // ASI_RESET_REQ data, assert system reset.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
-		SendData(0x00); // ASI_RESET_REQ data, clear the system reset request.
-		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		WriteControlStatus(0x08, 0x59); // ASI_RESET_REQ, assert system reset.
+		WriteControlStatus(0x08, 0x00); // ASI_RESET_REQ, clear the system reset request.
 		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
