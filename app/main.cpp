@@ -974,7 +974,7 @@ private:
 	int receive(void *ptr, int len, int timeout_ms)
 	{
 		int offset = 0;
-		while (1) {
+		while (len > 0) {
 			int n = conn_->read((uint8_t *)ptr + offset, len, timeout_ms);
 			if (n > 0) {
 				offset += n;
@@ -1000,6 +1000,19 @@ private:
 		}
 		return -1;
 	}
+
+	int updi_LDCS(uint8_t addr)
+	{
+		if (addr > 0x0f) return -1;
+		uint8_t tx[] = {0x55, (uint8_t)(0x80 | addr)}; // SYNCH, LDCS with a 4-bit register address.
+		uint8_t rx[10];
+		send_data(tx, sizeof(tx));
+		int n = receive(rx, sizeof(rx), 5);
+		if (n == 3 && memcmp(tx, rx, sizeof(tx)) == 0) {
+			return rx[sizeof(tx)];
+		}
+		return -1;
+	}
 public:
 	void setup(Connection *conn)
 	{
@@ -1008,6 +1021,17 @@ public:
 	void cmd_debug()
 	{
 		size_t offset = 0;
+
+		auto PrintByte = [&](uint8_t c){
+			if (offset & 0xf) {
+				putchar(' ');
+			} else {
+				if (offset != 0) putchar('\n');
+				printf("%04x: ", (unsigned int)offset);
+			}
+			offset++;
+			printf("%02x", (unsigned int)c);
+		};
 		
 		auto Receive = [&](int timeout_ms){
 			while (1) {
@@ -1015,17 +1039,17 @@ public:
 				int n = conn_->read(tmp, sizeof(tmp), timeout_ms);
 				if (n <= 0) break;
 				for (int i = 0; i < n; i++) {
-					if (offset & 0xf) {
-						putchar(' ');
-					} else {
-						if (offset != 0) {
-							putchar('\n');
-						}
-						printf("%04x: ", (unsigned int)offset);
-					}
-					offset++;
-					printf("%02x", tmp[i]);
+					PrintByte(tmp[i]);
 				}
+			}
+		};
+
+		auto ReadControlStatus = [&](uint8_t addr){
+			int c = updi_LDCS(addr);
+			if (c >= 0) {
+				PrintByte(c);
+			} else {
+				fprintf(stderr, "failed to read UPDI register 0x%02x\n", (unsigned int)addr);
 			}
 		};
 		
@@ -1050,12 +1074,9 @@ public:
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
 		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
 		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x80); // LDCS STATUSA (0x00), read the UPDI revision field (UPDIREV).
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
+		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
 		SendData(0xe6); // KEY with SIB=1 and SIZE_C=2, request the 32-byte System Information Block.
 		Receive(5);
@@ -1068,12 +1089,9 @@ public:
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
 		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
 		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x80); // LDCS STATUSA (0x00), read the UPDI revision field (UPDIREV).
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
+		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 #endif
 
 #if 1
@@ -1098,9 +1116,7 @@ public:
 #endif
 
 #if 1
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x87); // LDCS ASI_KEY_STATUS (0x07), read whether the NVMPROG key was accepted.
-		Receive(5);
+		ReadControlStatus(0x07); // ASI_KEY_STATUS, read whether the NVMPROG key was accepted.
 #endif
 
 #if 1
@@ -1110,21 +1126,12 @@ public:
 		SendData(0x55); // SYNCH frame before each UPDI instruction.
 		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
 		SendData(0x00); // ASI_RESET_REQ data, clear the system reset request.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
-		Receive(5);
+		Receive(5); // Drain the preceding STCS echoes before checking the LDCS reply.
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
+		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
 
 #endif
 		
