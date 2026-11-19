@@ -60,6 +60,12 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrhvpp   # ホスト
 - 任意の8ビット値は、`CMD_LOAD_7BITS` で下位7ビットをロードし、`CMD_ADDR0` / `CMD_ADDR1` または `CMD_DATA0` / `CMD_DATA1` の0/1側で最上位ビットを表します。
 - `CMD_CLEAR` は一時データとバッファアドレスを0に戻し、256バイトの共有 `flush_buffer` をクリアします。`CMD_DATA0` / `CMD_DATA1` は現在のバッファアドレスへ書き込んでアドレスを1進めます。
 
+### 実験的なUPDI対応
+
+- UPDI対応は実装中で、ホストとファームウェア間のプロトコルは未確定です。現在のホスト側の対応は`--device updi --debug`によるAVR64DD28のシグネチャ3バイト取得です。
+- ホスト側は`app/main.cpp`の`AvrUpdi`で`updi_LDS()`、`updi_LDCS()`、`updi_STCS()`を使います。ファームウェア側は`.AVRUPDI.`でモードを切り替え、`firmware-atmega32u2/avrupdi.cpp`と`uart.cpp`でUSBとUPDI間のバイト転送を処理します。
+- 既存のSTK500v1互換性テストではUPDIとUARTをスタブ化しています。UPDI通信を検証する自動テストはありません。
+
 ### 高電圧パラレルプログラミング
 - コマンドは、ATmega48/88/168/328P のデータシート「Parallel Programming」の手順に厳密に従って実装してください。手順を省くと、ターゲットのヒューズに不定値が書き込まれることがあります（過去に実際に起きています）。
 - ヒューズの書き込みは「Load Command 0x40 → Load Data Low Byte（XA1=0, XA0=1, XTAL1 パルス）→ BS1/BS2 で書き込み先を選択 → WR パルス → RDY/BSY を待つ」の順です。
