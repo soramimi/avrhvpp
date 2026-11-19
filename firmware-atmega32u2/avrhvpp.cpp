@@ -449,6 +449,7 @@ bool AVRHVPP::chip_erase()
 	return wait_ready();
 }
 
+namespace {
 uint8_t data_7bits_ = 0;
 uint16_t addr_ = 0;
 
@@ -457,6 +458,7 @@ bool flash_parameters_valid_ = false;
 
 uint16_t buffer_data_count_ = 0;
 bool buffer_data_valid_ = false;
+}
 
 static inline uint8_t address()
 {

@@ -131,6 +131,7 @@ public:
 		STK500,
 		BITBANG,
 		AVRHVPP,
+		AVRUPDI,
 	};
 	Mode mode_ = STK500;
 	Mode mode() const
@@ -177,7 +178,27 @@ public:
 
 		return false;
 	}
-
+	
+	bool enter_avrupdi_mode()
+	{
+		if (mode() == AVRUPDI) return true;
+		
+		static constexpr std::string_view command = ".AVRUPDI.";
+		static constexpr std::string_view expect = "AVRUPDI";
+		
+		if (sync()) {
+			serial_.write(command.data(), (int)command.size());
+			
+			std::vector<char> line;
+			if (read_line(&line, MODE_ENTER_TIMEOUT_MS) && line == expect) {
+				mode_ = AVRUPDI;
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	int read_pin(int pin, bool pullup)
 	{
 		char c = char(pullup ? CMD_READ_PULLUP : CMD_READ) | (pin & 0x0f);
@@ -199,6 +220,7 @@ public:
 
 enum class Device {
 	HVPP,
+	UPDI,
 	AVRISP,
 };
 
@@ -224,6 +246,8 @@ bool parse_device_type(std::string_view name, Device *device)
 {
 	if (name == "hvpp") {
 		*device = Device::HVPP;
+	} else if (name == "updi") {
+		*device = Device::UPDI;
 	} else if (name == "avrisp") {
 		*device = Device::AVRISP;
 	} else {
@@ -632,9 +656,6 @@ bool hvpp_read_status(Operation const &op, Connection *conn)
 {
 	int bytes = 0;
 	switch (op.command) {
-	case CMD_DEBUG:
-		bytes = 7;
-		break;
 	case CMD_READ_SIGNATURE:
 		bytes = 3;
 		break;
@@ -930,6 +951,182 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 	} else {
 		return hvpp_read_status(op, conn);
 	}
+}
+
+class AvrUpdi {
+private:
+	Connection *conn_ = nullptr;
+public:
+	void setup(Connection *conn)
+	{
+		conn_ = conn;
+	}
+	void cmd_debug()
+	{
+		size_t offset = 0;
+		
+		auto Receive = [&](int timeout_ms){
+			while (1) {
+				uint8_t tmp[256];
+				int n = conn_->read(tmp, sizeof(tmp), timeout_ms);
+				if (n <= 0) break;
+				for (int i = 0; i < n; i++) {
+					if (offset & 0xf) {
+						putchar(' ');
+					} else {
+						if (offset != 0) {
+							putchar('\n');
+						}
+						printf("%04x: ", (unsigned int)offset);
+					}
+					offset++;
+					printf("%02x", tmp[i]);
+				}
+			}
+		};
+		
+		auto SendBreak = [&](){
+			write_command(conn_, CMD_UPDI_BREAK);
+			Receive(100);
+		};
+		
+		auto SendData = [&](uint8_t c){
+			write_command(conn_, CMD_LOAD_7BITS | (c & 0x7f));
+			write_command(conn_, (c & 0x80) ? CMD_DATA1 : CMD_DATA0);
+		};
+		
+		SendBreak();
+		
+		// for AVR64DD28
+
+#if 1
+		SendData(0x55);
+		SendData(0xc3);
+		SendData(0x08);
+		SendData(0x55);
+		SendData(0xc2);
+		SendData(0x80);
+		SendData(0x55);
+		SendData(0x80);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+		SendData(0x55);
+		SendData(0xe6);
+		Receive(5);
+#endif
+
+#if 1
+		SendData(0x55);
+		SendData(0xc3);
+		SendData(0x08);
+		SendData(0x55);
+		SendData(0xc2);
+		SendData(0x80);
+		SendData(0x55);
+		SendData(0x80);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+#endif
+
+#if 1
+		
+		SendData(0x55);
+		SendData(0xc8);
+		SendData(0x59);
+		SendData(0x55);
+		SendData(0xe0);
+		Receive(5);
+		SendData(0x20);
+		SendData(0x67);
+		SendData(0x6f);
+		SendData(0x72);
+		SendData(0x50);
+		SendData(0x4d);
+		SendData(0x56);
+		SendData(0x4e);
+		Receive(5);
+
+#endif
+
+#if 1
+		SendData(0x55);
+		SendData(0x87);
+		Receive(5);
+#endif
+
+#if 1
+		SendData(0x55);
+		SendData(0xc8);
+		SendData(0x59);
+		SendData(0x55);
+		SendData(0xc8);
+		SendData(0x00);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x8b);
+		Receive(5);
+
+#endif
+
+#if 1
+		// read signature bytes
+		SendData(0x55);
+		SendData(0x04);
+		SendData(0x00);
+		SendData(0x11);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x04);
+		SendData(0x01);
+		SendData(0x11);
+		Receive(5);
+		SendData(0x55);
+		SendData(0x04);
+		SendData(0x02);
+		SendData(0x11);
+		Receive(5);
+#endif
+	}
+};
+
+void updi_debug(Connection *conn)
+{
+	AvrUpdi updi;
+	updi.setup(conn);
+	updi.cmd_debug();
+}
+
+bool updi_perform(Operation const &op, Connection *conn)
+{
+	if (!conn->enter_avrupdi_mode()) {
+		fprintf(stderr, "failed to enter avrupdi mode\n");
+		return false;
+	}
+	
+	if (op.command == CMD_DEBUG) {
+		
+		updi_debug(conn);
+		
+		conn->sync(); // exit updi mode
+		putchar('\n');
+		return true;
+	}
+	return false;
 }
 
 class Avrisp {
@@ -1533,6 +1730,7 @@ bool perform(Device device, Operation const &op, Connection *conn)
 {
 	switch (device) {
 	case Device::HVPP: return hvpp_perform(op, conn);
+	case Device::UPDI: return updi_perform(op, conn);
 	case Device::AVRISP: return avrisp_perform(op, conn);
 	}
 	fprintf(stderr, "unsupported device type\n");

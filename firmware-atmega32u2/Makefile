@@ -4,7 +4,7 @@ F_CPU := 16000000
 NAME := avrhvpp
 PROJDIR := .
 
-SRCS := main.cpp avrhvpp.cpp waitloop.cpp usb.c
+SRCS := main.cpp avrhvpp.cpp avrupdi.cpp waitloop.cpp usb.c uart.c
 
 LIBS := 
 
@@ -86,3 +86,5 @@ readhex:
 writehex:
 	$(AVRHVPP) --target $(TARGET) --write-hex /tmp/a.hex -wfl e2
 
+debug:
+	../app/_bin/avrhvpp -p /dev/ttyACM0 -d updi --debug

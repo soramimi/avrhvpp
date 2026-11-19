@@ -5,6 +5,7 @@
 
 enum Command {
 	CMD_CLEAR = 0x40,
+	CMD_UPDI_BREAK = 0x41,
 	CMD_DEBUG = 0x4f,
 	CMD_READ_SIGNATURE = 0x50,
 	CMD_READ_FUSE = 0x51,

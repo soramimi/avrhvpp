@@ -6,6 +6,8 @@
 #include <string.h>
 #include "avrgpio.h"
 #include "avrhvpp.h"
+#include "avrupdi.h"
+#include "uart.h"
 
 void flip_xtal1();
 
@@ -17,8 +19,8 @@ uint8_t data_tx_buffer_i;
 uint8_t data_tx_buffer_n;
 
 uint8_t data_rx_buffer[256];
-int data_rx_buffer_i;
-int data_rx_buffer_n;
+uint8_t data_rx_buffer_i;
+uint8_t data_rx_buffer_n;
 
 extern "C" void clear_buffers()
 {
@@ -47,7 +49,7 @@ void usb_poll_tx()
 
 static inline void usb_poll_rx()
 {
-	int space = sizeof(data_rx_buffer) - 1 - data_rx_buffer_n;
+	int space = sizeof(data_rx_buffer) - data_rx_buffer_n;
 	while (space > 0) {
 		uint8_t tmp[16];
 		int n = sizeof(tmp);
@@ -163,7 +165,7 @@ static inline int clamp(int v, int min, int max)
 	return v;
 }
 
-////
+//
 
 AVRHVPP avrhvpp;
 void AVRHVPP::write_byte(char c)
@@ -175,7 +177,12 @@ void AVRHVPP::write_string(char const *p)
 	usb_write_string(p);
 }
 
-////
+//
+
+AVRUPDI avrupdi;
+
+
+//
 
 avr::GPIO<avr::B, 0> icsp_rst;
 avr::GPIO<avr::B, 1> icsp_sck;
@@ -269,6 +276,7 @@ static SPI spi;
 enum class Programmer {
 	ISP,
 	AVRHVPP,
+	AVRUPDI,
 	BITBANG,
 };
 
@@ -814,6 +822,7 @@ void bitbang(uint8_t c)
 /////
 
 static char const *state_avrhvpp = nullptr;
+static char const *state_avrupdi = nullptr;
 static char const *state_bitbang = nullptr;
 
 static avr::GPIO<avr::B, 7> pin_xtal1_;
@@ -845,7 +854,10 @@ void reset_mode(Programmer mode)
 	
 	avrhvpp.reset_protocol();
 	
+	uart_enable(false);
+	
 	state_avrhvpp = nullptr;
+	state_avrupdi = nullptr;
 	state_bitbang = nullptr;
 	programmer_mode_ = mode;
 	
@@ -864,43 +876,63 @@ void isp_poll()
 			}
 		}
 		if (programmer_mode_ == Programmer::ISP) {
+			bool done = false;
 			if (state_avrhvpp) {
 				if (*state_avrhvpp == c) {
 					state_avrhvpp++;
 					if (!*state_avrhvpp) {
-						state_avrhvpp = nullptr;
 						usb_write_string("AVRHVPP\r\n");
 						reset_mode(Programmer::AVRHVPP);
 					}
-					return;
+					done = true;
 				} else {
 					state_avrhvpp = nullptr;
+				}
+			}
+			if (state_avrupdi) {
+				if (*state_avrupdi == c) {
+					state_avrupdi++;
+					if (!*state_avrupdi) {
+						usb_write_string("AVRUPDI\r\n");
+						reset_mode(Programmer::AVRUPDI);
+					}
+					done = true;
+				} else {
+					state_avrupdi = nullptr;
 				}
 			}
 			if (state_bitbang) {
 				if (*state_bitbang == c) {
 					state_bitbang++;
 					if (!*state_bitbang) {
-						state_bitbang = nullptr;
 						usb_write_string("BITBANG\r\n");
 						reset_mode(Programmer::BITBANG);
 					}
-					return;
+					done = true;
 				} else {
 					state_bitbang = nullptr;
 				}
 			}
+			if (done) {
+				return;
+			}
 			if (c == '.') {
 				state_avrhvpp = "AVRHVPP.";
+				state_avrupdi = "AVRUPDI.";
 				state_bitbang = "BITBANG.";
 				return;
 			}
 			avrisp(c);
 		} else if (programmer_mode_ == Programmer::AVRHVPP) {
 			avrhvpp.process(c);
+		} else if (programmer_mode_ == Programmer::AVRUPDI) {
+			avrupdi.process(c);
 		} else if (programmer_mode_ == Programmer::BITBANG) {
 			bitbang(c);
 		}
+	}
+	if (programmer_mode_ == Programmer::AVRUPDI) {
+		updi_poll();
 	}
 }
 
