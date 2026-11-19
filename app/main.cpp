@@ -956,6 +956,50 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 class AvrUpdi {
 private:
 	Connection *conn_ = nullptr;
+	
+	void send_data(uint8_t c)
+	{
+		write_command(conn_, CMD_LOAD_7BITS | (c & 0x7f));
+		write_command(conn_, (c & 0x80) ? CMD_DATA1 : CMD_DATA0);
+	}
+	
+	void send_data(void *p, int n)
+	{
+		uint8_t *ptr = (uint8_t *)p;
+		for (int i = 0; i < n; i++) {
+			send_data(ptr[i]);
+		}
+	}
+	
+	int receive(void *ptr, int len, int timeout_ms)
+	{
+		int offset = 0;
+		while (1) {
+			int n = conn_->read((uint8_t *)ptr + offset, len, timeout_ms);
+			if (n > 0) {
+				offset += n;
+				len -= n;
+			}
+			if (n <= 0) break;
+		}
+		return offset;
+	}
+	
+	int updi_LDS(uint16_t addr)
+	{
+		uint8_t tx[10];
+		uint8_t rx[10];
+		tx[0] = 0x55; // SYNCH frame before each UPDI instruction.
+		tx[1] = 0x04; // LDS, read one byte using a 16-bit direct address (low byte first).
+		tx[2] = (uint8_t)addr; // Low address byte
+		tx[3] = (uint8_t)(addr >> 8); // High address
+		send_data(tx, 4);
+		int n = receive(rx, sizeof(rx), 5);
+		if (n == 5 && memcmp(tx, rx, 4) == 0) { // Check that the first 4 bytes match the transmitted data.
+			return rx[4];
+		}
+		return -1;
+	}
 public:
 	void setup(Connection *conn)
 	{
@@ -1000,106 +1044,124 @@ public:
 		// for AVR64DD28
 
 #if 1
-		SendData(0x55);
-		SendData(0xc3);
-		SendData(0x08);
-		SendData(0x55);
-		SendData(0xc2);
-		SendData(0x80);
-		SendData(0x55);
-		SendData(0x80);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc3); // STCS CTRLB (0x03), write the UPDI Control B register.
+		SendData(0x08); // CTRLB data, set CCDETDIS to disable collision and contention detection.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
+		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x80); // LDCS STATUSA (0x00), read the UPDI revision field (UPDIREV).
 		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
 		Receive(5);
-		SendData(0x55);
-		SendData(0xe6);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xe6); // KEY with SIB=1 and SIZE_C=2, request the 32-byte System Information Block.
 		Receive(5);
 #endif
 
 #if 1
-		SendData(0x55);
-		SendData(0xc3);
-		SendData(0x08);
-		SendData(0x55);
-		SendData(0xc2);
-		SendData(0x80);
-		SendData(0x55);
-		SendData(0x80);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc3); // STCS CTRLB (0x03), write the UPDI Control B register.
+		SendData(0x08); // CTRLB data, set CCDETDIS to disable collision and contention detection.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc2); // STCS CTRLA (0x02), write the UPDI Control A register.
+		SendData(0x80); // CTRLA data, set IBDLY to enable the inter-byte delay for multi-byte LD/LDS.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x80); // LDCS STATUSA (0x00), read the UPDI revision field (UPDIREV).
 		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
 		Receive(5);
 #endif
 
 #if 1
 		
-		SendData(0x55);
-		SendData(0xc8);
-		SendData(0x59);
-		SendData(0x55);
-		SendData(0xe0);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
+		SendData(0x59); // ASI_RESET_REQ data, assert system reset.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
 		Receive(5);
-		SendData(0x20);
-		SendData(0x67);
-		SendData(0x6f);
-		SendData(0x72);
-		SendData(0x50);
-		SendData(0x4d);
-		SendData(0x56);
-		SendData(0x4e);
-		Receive(5);
-
-#endif
-
-#if 1
-		SendData(0x55);
-		SendData(0x87);
-		Receive(5);
-#endif
-
-#if 1
-		SendData(0x55);
-		SendData(0xc8);
-		SendData(0x59);
-		SendData(0x55);
-		SendData(0xc8);
-		SendData(0x00);
-		SendData(0x55);
-		SendData(0x8b);
-		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
-		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
-		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
-		Receive(5);
-		SendData(0x55);
-		SendData(0x8b);
+		// Send the ASCII key "NVMProg " least-significant byte first.
+		SendData(0x20); // NVMPROG key byte 0 (space).
+		SendData(0x67); // NVMPROG key byte 1 ('g').
+		SendData(0x6f); // NVMPROG key byte 2 ('o').
+		SendData(0x72); // NVMPROG key byte 3 ('r').
+		SendData(0x50); // NVMPROG key byte 4 ('P').
+		SendData(0x4d); // NVMPROG key byte 5 ('M').
+		SendData(0x56); // NVMPROG key byte 6 ('V').
+		SendData(0x4e); // NVMPROG key byte 7 ('N').
 		Receive(5);
 
 #endif
 
 #if 1
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x87); // LDCS ASI_KEY_STATUS (0x07), read whether the NVMPROG key was accepted.
+		Receive(5);
+#endif
+
+#if 1
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
+		SendData(0x59); // ASI_RESET_REQ data, assert system reset.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0xc8); // STCS ASI_RESET_REQ (0x08), write the system reset request register.
+		SendData(0x00); // ASI_RESET_REQ data, clear the system reset request.
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
+		Receive(5);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
+		Receive(5);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
+		Receive(5);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
+		Receive(5);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x8b); // LDCS ASI_SYS_STATUS (0x0b), read reset, programming and lock status.
+		Receive(5);
+
+#endif
+		
 		// read signature bytes
-		SendData(0x55);
-		SendData(0x04);
-		SendData(0x00);
-		SendData(0x11);
+#if 0
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
+		SendData(0x00); // Low address byte of SIGROW.DEVICEID0 (0x1100).
+		SendData(0x11); // High address byte of SIGROW.DEVICEID0 (0x1100).
 		Receive(5);
-		SendData(0x55);
-		SendData(0x04);
-		SendData(0x01);
-		SendData(0x11);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
+		SendData(0x01); // Low address byte of SIGROW.DEVICEID1 (0x1101).
+		SendData(0x11); // High address byte of SIGROW.DEVICEID1 (0x1101).
 		Receive(5);
-		SendData(0x55);
-		SendData(0x04);
-		SendData(0x02);
-		SendData(0x11);
+		SendData(0x55); // SYNCH frame before each UPDI instruction.
+		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
+		SendData(0x02); // Low address byte of SIGROW.DEVICEID2 (0x1102).
+		SendData(0x11); // High address byte of SIGROW.DEVICEID2 (0x1102).
 		Receive(5);
+#else
+		putchar('\n');
+		uint32_t sig = 0;
+		uint8_t tmp[3];
+		uint16_t addr = 0x1100; // SIGROW.DEVICEID0
+		int i = 0;
+		for (i = 0; i < 3; i++) {
+			int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2
+			if (c < 0) break;
+			tmp[i] = c;
+		}
+		if (i == 3) {
+			sig = (tmp[0] << 16) | (tmp[1] << 8) | tmp[2];
+			printf("signature: 0x%06x\n", sig);
+		} else {
+			fprintf(stderr, "failed to read signature bytes\n");
+		}
 #endif
 	}
 };

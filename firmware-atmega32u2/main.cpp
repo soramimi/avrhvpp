@@ -49,7 +49,8 @@ void usb_poll_tx()
 
 static inline void usb_poll_rx()
 {
-	int space = sizeof(data_rx_buffer) - data_rx_buffer_n;
+	// Leave one slot free so the 8-bit count cannot wrap to zero.
+	int space = sizeof(data_rx_buffer) - 1 - data_rx_buffer_n;
 	while (space > 0) {
 		uint8_t tmp[16];
 		int n = sizeof(tmp);

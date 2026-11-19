@@ -24,6 +24,12 @@ uint8_t fake_pind() { return 0x1e; }
 void waitloop(unsigned int) {}
 void msleep(unsigned int) {}
 
+// Mode resets disable the UART. These fixtures use USB and SPI only.
+void uart_enable(bool) {}
+AVRUPDI::AVRUPDI() = default;
+void AVRUPDI::process(uint8_t) { assert(false && "unexpected UPDI command"); }
+void updi_poll() { assert(false && "unexpected UPDI poll"); }
+
 struct TargetFixture {
 	uint8_t code;
 	std::array<uint8_t, 3> signature;
