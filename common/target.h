@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-enum TargetCapability : uint8_t {
+enum TargetCapability : uint16_t {
 	CapabilityFlash = 1 << 0,
 	CapabilityFuseLow = 1 << 1,
 	CapabilityFuseHigh = 1 << 2,
@@ -11,6 +11,7 @@ enum TargetCapability : uint8_t {
 	CapabilityLockBits = 1 << 4,
 	CapabilityChipErase = 1 << 5,
 	CapabilityHvpp = 1 << 6,
+	CapabilityUpdi = 1 << 7,
 };
 
 struct IspParameters {
@@ -27,6 +28,10 @@ struct IspParameters {
 	uint8_t lock_mask;
 };
 
+struct UpdiParameters {
+	uint16_t sigrow_address = 0;
+};
+
 struct TargetDefinition {
 	char const *display_name;
 	uint8_t signature[3];
@@ -34,6 +39,7 @@ struct TargetDefinition {
 	uint16_t flash_page_count;
 	uint8_t capabilities;
 	IspParameters isp;
+	UpdiParameters updi;
 
 	constexpr uint16_t flash_page_words() const
 	{
@@ -75,6 +81,7 @@ constexpr TargetDefinition TargetATmega8 = {
 		| CapabilityChipErase
 		| CapabilityHvpp,
 	{0x70, 512, 4, 0xd7, 0xc2, false, 10, 20, {0xff, 0xff, 0}, {0xff, 0xdf, 0}, 0x3f},
+	{}
 };
 
 constexpr TargetDefinition TargetATmega48 = {
@@ -90,6 +97,7 @@ constexpr TargetDefinition TargetATmega48 = {
 		| CapabilityChipErase
 		| CapabilityHvpp,
 	{0x59, 256, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x01}, {0xff, 0xdf, 0x01}, 0x03},
+	{}
 };
 
 constexpr TargetDefinition TargetATmega88 = {
@@ -105,6 +113,7 @@ constexpr TargetDefinition TargetATmega88 = {
 		| CapabilityChipErase
 		| CapabilityHvpp,
 	{0x73, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
+	{}
 };
 
 constexpr TargetDefinition TargetATmega168 = {
@@ -120,6 +129,7 @@ constexpr TargetDefinition TargetATmega168 = {
 		| CapabilityChipErase
 		| CapabilityHvpp,
 	{0x86, 512, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
+	{}
 };
 
 constexpr TargetDefinition TargetATmega328P = {
@@ -135,6 +145,7 @@ constexpr TargetDefinition TargetATmega328P = {
 		| CapabilityChipErase
 		| CapabilityHvpp,
 	{0x86, 1024, 4, 0xd7, 0xc2, true, 0, 0, {0xff, 0xff, 0x07}, {0xff, 0xdf, 0x07}, 0x3f},
+	{}
 };
 
 // These targets are supported through AVRISP only by this programmer.
@@ -150,6 +161,7 @@ constexpr TargetDefinition TargetATtiny2313 = {
 		| CapabilityLockBits
 		| CapabilityChipErase,
 	{0x23, 128, 4, 0xd4, 0xd6, true, 0, 0, {0xff, 0xff, 0x01}, {0xff, 0xdf, 0x01}, 0x03},
+	{},
 };
 
 constexpr TargetDefinition TargetATtiny13A = {
@@ -164,7 +176,56 @@ constexpr TargetDefinition TargetATtiny13A = {
 		| CapabilityChipErase,
 	// SPIEN is bit 7 of the low fuse; high-fuse bits 7..5 are reserved.
 	{0x14, 64, 4, 0, 0, true, 0, 0, {0xff, 0x1f, 0}, {0x7f, 0x1f, 0}, 0x03},
+	{},
 };
+
+// wip: experimental UPDI support
+
+constexpr TargetDefinition TargetATtiny202 = {
+	"ATtiny202",
+	{0x1e, 0x91, 0x23},
+	0,
+	0,
+	// CapabilityFlash
+	CapabilityUpdi,	
+	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
+	{0x1100},
+};
+
+constexpr TargetDefinition TargetAVR64DD28 = {
+	"AVR64DD28",
+	{0x1e, 0x96, 0x1b},
+	0,
+	0,
+	// CapabilityFlash
+	CapabilityUpdi,	
+	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
+	{0x1100},
+};
+
+constexpr TargetDefinition TargetAVR64DD32 = {
+	"AVR64DD32",
+	{0x1e, 0x96, 0x1a},
+	0,
+	0,
+	// CapabilityFlash
+	CapabilityUpdi,	
+	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
+	{0x1100},
+};
+	
+constexpr TargetDefinition TargetAVR64DU32 = {
+	"AVR64DU32",
+	{0x1e, 0x96, 0x21},
+	0,
+	0,
+	// CapabilityFlash
+	CapabilityUpdi,	
+	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
+	{0x1080},
+};
+
+//
 
 inline TargetDefinition const *find_target_by_signature(
 	uint8_t signature0,
@@ -191,6 +252,18 @@ inline TargetDefinition const *find_target_by_signature(
 	}
 	if (TargetATtiny13A.matches_signature(signature0, signature1, signature2)) {
 		return &TargetATtiny13A;
+	}
+	if (TargetATtiny202.matches_signature(signature0, signature1, signature2)) {
+		return &TargetATtiny202;
+	}
+	if (TargetAVR64DD28.matches_signature(signature0, signature1, signature2)) {
+		return &TargetAVR64DD28;
+	}
+	if (TargetAVR64DD32.matches_signature(signature0, signature1, signature2)) {
+		return &TargetAVR64DD32;
+	}
+	if (TargetAVR64DU32.matches_signature(signature0, signature1, signature2)) {
+		return &TargetAVR64DU32;
 	}
 	return 0;
 }

@@ -3,6 +3,7 @@
 #include <chrono>
 #include "Connection.h"
 #include "../common/commands.h"
+#include "target.h"
 #include "main.h"
 
 void AvrUpdi::PrintByte(uint8_t c)
@@ -135,19 +136,51 @@ bool AvrUpdi::configure_and_check_updi_link()
 
 bool AvrUpdi::wait_for_reset(int timeout_ms)
 {
-	constexpr uint8_t ASI_SYS_STATUS = 0x0b;
-	constexpr uint8_t SYSRST = 0x20;
 	for (int i = 0; i < timeout_ms; i++) {
-		int status = updi_LDCS(ASI_SYS_STATUS, 1);
+		int status = updi_LDCS(0x0b, 1); // ASI_SYS_STATUS
 		if (status < 0) continue;
-		if (!(status & SYSRST)) return true;
+		if ((status & 0x09) == 0x08) return true; // Check that SYSRST is set and the system is not busy.
 	}
 	return false;
 }
 
-void AvrUpdi::setup(Connection *conn)
+void AvrUpdi::setup(Operation const *op, Connection *conn)
 {
+	op_ = op;
 	conn_ = conn;
+}
+
+bool AvrUpdi::enter_programming_mode()
+{
+	if (!write_control_status(0x08, 0x59)) { // ASI_RESET_REQ, assert system reset.
+		write_control_status(0x08, 0x00); // The reset may have been asserted despite the missing echo.
+		return false;
+	}
+	
+	send_byte(0x55); // SYNCH frame before each UPDI instruction.
+	send_byte(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
+	receive_all(default_timeout());
+	
+	// Send the ASCII key "NVMProg " least-significant byte first.
+	static constexpr std::string_view key = "NVMProg ";
+	for (int i = key.size(); i > 0; i--) {
+		send_byte(key[i - 1]);
+	}
+	receive_all(default_timeout());
+	
+	constexpr uint8_t NVMPROG = 0x10;
+	int key_status = read_control_status(0x07); // ASI_KEY_STATUS
+	if (key_status < 0 || !(key_status & NVMPROG)) {
+		if (key_status >= 0) fprintf(stderr, "UPDI NVMPROG key was not accepted\n");
+		write_control_status(0x08, 0x00); // Release the reset held during the key transfer.
+		return false;
+	}
+	return true;
+}
+
+void AvrUpdi::leave_programming_mode()
+{
+	// not implemented yet
 }
 
 bool AvrUpdi::cmd_debug()
@@ -182,27 +215,15 @@ bool AvrUpdi::cmd_debug()
 	// Request the 64-bit NVMPROG key to enable flash programming on devices that require it.
 	
 	{
-		
-		if (!write_control_status(0x08, 0x59)) { // ASI_RESET_REQ, assert system reset.
-			write_control_status(0x08, 0x00); // The reset may have been asserted despite the missing echo.
-			return false;
+		bool ok = false;
+		for (int i = 0; i < 10; i++) {
+			if (enter_programming_mode()) {
+				ok = true;
+				break;
+			}
 		}
-		
-		send_byte(0x55); // SYNCH frame before each UPDI instruction.
-		send_byte(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
-		
-		// Send the ASCII key "NVMProg " least-significant byte first.
-		static constexpr std::string_view key = "NVMProg ";
-		for (int i = key.size(); i > 0; i--) {
-			send_byte(key[i - 1]);
-		}
-		receive_all(default_timeout());
-		
-		constexpr uint8_t NVMPROG = 1 << 4;
-		int key_status = read_control_status(0x07); // ASI_KEY_STATUS
-		if (key_status < 0 || !(key_status & NVMPROG)) {
-			if (key_status >= 0) fprintf(stderr, "UPDI NVMPROG key was not accepted\n");
-			write_control_status(0x08, 0x00); // Release the reset held during the key transfer.
+		if (!ok) {
+			fprintf(stderr, "failed to enter programming mode with NVMPROG key\n");
 			return false;
 		}
 	}
@@ -226,7 +247,11 @@ bool AvrUpdi::cmd_debug()
 	uint32_t sig = 0;
 	{
 		uint8_t tmp[3];
-		uint16_t addr = 0x1100; // SIGROW.DEVICEID0
+		auto addr = op_->target->sigrow_address();
+		if (addr == -1) {
+			fprintf(stderr, "target does not have a signature row\n");
+			return false;
+		}
 		int i = 0;
 		for (i = 0; i < 3; i++) {
 			int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2

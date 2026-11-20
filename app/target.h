@@ -25,6 +25,19 @@ public:
 	{
 		return name_;
 	}
+	
+	bool is_signature(uint32_t sig) const
+	{
+		return definition_.matches_signature((sig >> 16) & 0xff, (sig >> 8) & 0xff, sig & 0xff);
+	}
+	
+	int32_t sigrow_address() const
+	{
+		if (definition_.supports(CapabilityUpdi)) {
+			return definition_.updi.sigrow_address;
+		}
+		return -1;
+	}	
 };
 
 inline std::unique_ptr<Target> create_target(std::string_view name)
@@ -49,6 +62,9 @@ inline std::unique_ptr<Target> create_target(std::string_view name)
 	}
 	if (name == "attiny13a") {
 		return std::make_unique<Target>(TargetATtiny13A, "attiny13a");
+	}
+	if (name == "attiny202") {
+		return std::make_unique<Target>(TargetATtiny202, "attiny202");
 	}
 	return nullptr;
 }

@@ -48,17 +48,6 @@ struct Options {
 	bool chip_erase_before_write_hex = true;
 };
 
-struct Operation {
-	Command command;
-	uint16_t data = 0;
-	uint8_t value = 0;
-	std::string path;
-	std::vector<uint8_t> bytes;
-	std::vector<uint8_t> page_mask;
-	bool chip_erase = false;
-	Target const *target = nullptr;
-};
-
 bool parse_device_type(std::string_view name, Device *device)
 {
 	if (name == "hvpp") {
@@ -771,14 +760,6 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 	}
 }
 
-
-bool updi_debug(Connection *conn)
-{
-	AvrUpdi updi;
-	updi.setup(conn);
-	return updi.cmd_debug();
-}
-
 bool updi_perform(Operation const &op, Connection *conn)
 {
 	if (!conn->enter_avrupdi_mode()) {
@@ -788,7 +769,12 @@ bool updi_perform(Operation const &op, Connection *conn)
 	
 	if (op.command == CMD_DEBUG) {
 		
-		bool ok = updi_debug(conn);
+		bool ok = false;
+		{
+			AvrUpdi updi;
+			updi.setup(&op, conn);
+			ok = updi.cmd_debug();
+		}
 		
 		conn->sync(); // exit updi mode
 		putchar('\n');
