@@ -434,7 +434,7 @@ static std::string capture_operation(Operation const &operation, Connection *con
 	return capture_output([&]() { return perform(device, operation, connection); }, ok);
 }
 
-static bool read_signature_session(Avrisp *programmer, uint8_t *signature)
+static bool read_signature_session(AvrIsp *programmer, uint8_t *signature)
 {
 	bool ok = programmer->begin();
 	if (ok) ok = programmer->read_signature(signature);
@@ -464,7 +464,7 @@ static void test_avrisp(Connection *connection)
 			isp_test::fault_command = command;
 			isp_test::fault = fault;
 			isp_test::faults_left = command == 0x30 ? 3 : 1;
-			Avrisp programmer(connection, 3);
+			AvrIsp programmer(connection, 3);
 			uint8_t signature[3];
 			assert(!read_signature_session(&programmer, signature));
 			assert(!isp_test::programming);
@@ -480,14 +480,14 @@ static void test_avrisp(Connection *connection)
 	isp_test::fault_command = 0x30;
 	isp_test::fault = isp_test::Fault::Header;
 	isp_test::faults_left = 1;
-	Avrisp retrying(connection, 3);
+	AvrIsp retrying(connection, 3);
 	uint8_t signature[3];
 	assert(read_signature_session(&retrying, signature));
 	assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x30, 0x50, 0x75, 0x51}));
 	for (int failed_call : {1, 2}) {
 		isp_test::reset();
 		isp_test::fail_write_call = failed_call;
-		Avrisp programmer(connection, 3);
+		AvrIsp programmer(connection, 3);
 		assert(read_signature_session(&programmer, signature));
 		assert(!isp_test::programming);
 	}
@@ -496,7 +496,7 @@ static void test_avrisp(Connection *connection)
 			isp_test::reset();
 			isp_test::fail_write_call = failed_call;
 			isp_test::zero_write = zero;
-			Avrisp programmer(connection, 3);
+			AvrIsp programmer(connection, 3);
 			assert(!read_signature_session(&programmer, signature));
 			assert(!isp_test::programming); // A partial Q is completed, then retried.
 		}
@@ -563,7 +563,7 @@ static void test_avrisp_sessions(Connection *connection)
 				isp_test::reset();
 				isp_test::read_chunk = read_chunk;
 				isp_test::write_chunk = write_chunk;
-				Avrisp programmer(connection, 20);
+				AvrIsp programmer(connection, 20);
 				assert(programmer.begin(test.target));
 				std::vector<uint8_t> expected = {0x42, test.code, 0, 0, 1, 1, 1, 1, test.fuse_bytes,
 					0xff, 0xff, 0xff, 0xff, 0, test.page_bytes, test.eeprom_hi, test.eeprom_lo,
@@ -607,7 +607,7 @@ static void test_avrisp_sessions(Connection *connection)
 	assert(isp_test::commands == (std::vector<uint8_t>{0x30, 0x42, 0x45, 0x50, 0x75, 0x75, 0x51}));
 	isp_test::reset();
 	{
-		Avrisp programmer(connection, 20);
+		AvrIsp programmer(connection, 20);
 		assert(programmer.begin());
 	}
 	assert(!isp_test::programming && isp_test::commands.back() == 0x51);
@@ -617,7 +617,7 @@ static void test_avrisp_sessions(Connection *connection)
 		TargetDefinition target = TargetATmega328P;
 		target.flash_page_bytes = 256;
 		target.flash_page_count = 1;
-		Avrisp programmer(connection, 20);
+		AvrIsp programmer(connection, 20);
 		assert(programmer.begin(&target));
 		std::array<uint8_t, 256> payload, output;
 		for (size_t i = 0; i < payload.size(); ++i) payload[i] = i;
@@ -629,7 +629,7 @@ static void test_avrisp_sessions(Connection *connection)
 	// Exhausted cleanup retries remain failures, even if Q reached the device.
 	for (auto fault : {isp_test::Fault::Header, isp_test::Fault::Status, isp_test::Fault::Truncated, isp_test::Fault::Read}) {
 		isp_test::reset();
-		Avrisp programmer(connection, 10);
+		AvrIsp programmer(connection, 10);
 		assert(programmer.begin());
 		isp_test::fault_command = 0x51;
 		isp_test::fault = fault;
@@ -640,7 +640,7 @@ static void test_avrisp_sessions(Connection *connection)
 	}
 	for (bool wrong_size : {false, true}) {
 		isp_test::reset();
-		Avrisp programmer(connection, 20);
+		AvrIsp programmer(connection, 20);
 		assert(programmer.begin(&TargetATmega328P));
 		auto count = isp_test::packets.size();
 		uint8_t buffer[128] = {};
@@ -662,7 +662,7 @@ static void test_avrisp_variable_failures(Connection *connection)
 		for (unsigned int offset = 0; offset < length; ++offset) {
 			for (bool zero : {false, true}) {
 				isp_test::reset();
-				Avrisp programmer(connection, 20);
+				AvrIsp programmer(connection, 20);
 				isp_test::zero_write = zero;
 				uint8_t buffer[128] = {};
 				bool ok;
@@ -698,7 +698,7 @@ static void test_avrisp_variable_failures(Connection *connection)
 	for (uint8_t command : {0x42, 0x45, 0x55, 0x56, 0x64, 0x74}) {
 		for (auto fault : {isp_test::Fault::Header, isp_test::Fault::Status, isp_test::Fault::Truncated, isp_test::Fault::Read}) {
 			isp_test::reset();
-			Avrisp programmer(connection, 10);
+			AvrIsp programmer(connection, 10);
 			uint8_t buffer[128] = {0x20, 0xff, 0x00, 0x14, 0x10};
 			if (command != 0x42 && command != 0x45) assert(programmer.begin(&TargetATmega328P));
 			isp_test::fault_command = command;
@@ -1118,7 +1118,7 @@ static void test_avrisp_write_failures(Connection *connection)
 	// Missing EOP is also unsafe: all four SPI bytes may already have executed.
 	for (unsigned int offset = 1; offset < 6; ++offset) {
 		reset_isp_write_model(definition);
-		Avrisp programmer(connection, 20);
+		AvrIsp programmer(connection, 20);
 		assert(programmer.begin(&definition));
 		isp_test::fail_write_call = isp_test::write_calls + 6 + offset + 1;
 		assert(!programmer.write_fuse(0, 0x63) && !programmer.finish());
@@ -1479,7 +1479,7 @@ static void test_avrisp_only_targets(Connection *connection)
 			reset_isp_write_model(definition);
 			isp_test::forever_busy = timeout;
 			isp_test::ignore_write = !timeout;
-			Avrisp programmer(connection, 20, 5);
+			AvrIsp programmer(connection, 20, 5);
 			assert(programmer.begin(&definition));
 			assert(!programmer.write_fuse(0, 0x63));
 			uint8_t signature[3];
