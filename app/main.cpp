@@ -800,9 +800,10 @@ public:
 	bool write_page(uint16_t page, uint8_t const *data, size_t size)
 	{
 		FlashParameters parameters;
-		if (size != target_.definition().flash_page_bytes || !make_flash_parameters(page, target_, &parameters)
-			|| !write_flash_parameters(parameters.word_address, parameters.byte_count, conn_)) return false;
-		for (size_t i = 0; i < size; ++i) write_encoded_byte(conn_, data[i], CMD_DATA0, CMD_DATA1);
+		if (size != target_.definition().flash_page_bytes || !make_flash_parameters(page, target_, &parameters) || !write_flash_parameters(parameters.word_address, parameters.byte_count, conn_)) return false;
+		for (size_t i = 0; i < size; ++i) {
+			write_encoded_byte(conn_, data[i], CMD_DATA0, CMD_DATA1);
+		}
 		write_command(conn_, CMD_WRITE_PAGE);
 		if (read_ack(conn_, PAGE_WRITE_TIMEOUT_MS)) return true;
 		fprintf(stderr, "failed to write flash page %u; the page must be blank or already match the input\n", (unsigned int)page);
@@ -956,26 +957,28 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 class AvrUpdi {
 private:
 	Connection *conn_ = nullptr;
+	size_t offset_ = 0;
 	
-	void send_data(uint8_t c)
+	void PrintByte(uint8_t c)
 	{
-		write_command(conn_, CMD_LOAD_7BITS | (c & 0x7f));
-		write_command(conn_, (c & 0x80) ? CMD_DATA1 : CMD_DATA0);
-	}
-	
-	void send_data(void *p, int n)
-	{
-		uint8_t *ptr = (uint8_t *)p;
-		for (int i = 0; i < n; i++) {
-			send_data(ptr[i]);
+		if (offset_ & 0xf) {
+			putchar(' ');
+		} else {
+			if (offset_ != 0) putchar('\n');
+			printf("%04x: ", (unsigned int)offset_);
 		}
+		offset_++;
+		printf("%02x", (unsigned int)c);
 	}
 	
 	int receive(void *ptr, int len, int timeout_ms)
 	{
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 		int offset = 0;
 		while (len > 0) {
-			int n = conn_->read((uint8_t *)ptr + offset, len, timeout_ms);
+			auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+			if (remaining <= 0) break;
+			int n = conn_->read((uint8_t *)ptr + offset, len, (int)remaining);
 			if (n > 0) {
 				offset += n;
 				len -= n;
@@ -985,29 +988,62 @@ private:
 		return offset;
 	}
 	
+	void receive_all(int timeout_ms)
+	{
+		while (1) {
+			uint8_t tmp[256];
+			int n = conn_->read(tmp, sizeof(tmp), timeout_ms);
+			if (n <= 0) break;
+			for (int i = 0; i < n; i++) {
+				PrintByte(tmp[i]);
+			}
+		}
+	}
+	
+	void send_break()
+	{
+		write_command(conn_, CMD_UPDI_BREAK);
+		receive_all(100);
+	}
+	
+	void send_byte(uint8_t c)
+	{
+		write_command(conn_, CMD_LOAD_7BITS | (c & 0x7f));
+		write_command(conn_, (c & 0x80) ? CMD_UPDI_SEND1 : CMD_UPDI_SEND0);
+	}
+	
+	void send_bytes(void *p, int n)
+	{
+		uint8_t *ptr = (uint8_t *)p;
+		for (int i = 0; i < n; i++) {
+			send_byte(ptr[i]);
+		}
+	}
+	
+	int default_timeout() const
+	{
+		return 10;
+	}
+	
 	int updi_LDS(uint16_t addr)
 	{
-		uint8_t tx[10];
-		uint8_t rx[10];
-		tx[0] = 0x55; // SYNCH frame before each UPDI instruction.
-		tx[1] = 0x04; // LDS, read one byte using a 16-bit direct address (low byte first).
-		tx[2] = (uint8_t)addr; // Low address byte
-		tx[3] = (uint8_t)(addr >> 8); // High address
-		send_data(tx, 4);
-		int n = receive(rx, sizeof(rx), 5);
+		uint8_t tx[] = {0x55, 0x04, (uint8_t)addr, (uint8_t)(addr >> 8)}; // SYNCH, LDS with a 16-bit direct address (low byte first).
+		uint8_t rx[5];
+		send_bytes(tx, 4);
+		int n = receive(rx, sizeof(rx), default_timeout());
 		if (n == 5 && memcmp(tx, rx, 4) == 0) { // Check that the first 4 bytes match the transmitted data.
 			return rx[4];
 		}
 		return -1;
 	}
 
-	int updi_LDCS(uint8_t addr)
+	int updi_LDCS(uint8_t addr, int timeout_ms)
 	{
 		if (addr > 0x0f) return -1;
 		uint8_t tx[] = {0x55, (uint8_t)(0x80 | addr)}; // SYNCH, LDCS with a 4-bit register address.
-		uint8_t rx[10];
-		send_data(tx, sizeof(tx));
-		int n = receive(rx, sizeof(rx), 5);
+		uint8_t rx[3];
+		send_bytes(tx, sizeof(tx));
+		int n = receive(rx, sizeof(rx), timeout_ms);
 		if (n == 3 && memcmp(tx, rx, sizeof(tx)) == 0) {
 			return rx[sizeof(tx)];
 		}
@@ -1018,165 +1054,160 @@ private:
 	{
 		if (addr > 0x0f) return false;
 		uint8_t tx[] = {0x55, (uint8_t)(0xc0 | addr), value};
-		uint8_t rx[10];
-		send_data(tx, sizeof(tx));
+		uint8_t rx[3];
+		send_bytes(tx, sizeof(tx));
 		// STCS has no target response. Check the local echo of the three sent bytes.
-		int n = receive(rx, sizeof(rx), 5);
+		int n = receive(rx, sizeof(rx), default_timeout());
 		return n == 3 && memcmp(tx, rx, sizeof(tx)) == 0;
+	}
+
+	int read_control_status(uint8_t addr)
+	{
+		int c = updi_LDCS(addr, default_timeout());
+		if (c < 0) {
+			fprintf(stderr, "failed to read UPDI register 0x%02x\n", (unsigned int)addr);
+		}
+		return c;
+	}
+
+	bool write_control_status(uint8_t addr, uint8_t value)
+	{
+		if (!updi_STCS(addr, value)) {
+			fprintf(stderr, "failed to verify STCS echo for UPDI register 0x%02x\n", (unsigned int)addr);
+			return false;
+		}
+		return true;
+	}
+
+	bool configure_and_check_updi_link()
+	{
+		if (!write_control_status(0x03, 0x08)) return false; // CTRLB.CCDETDIS
+		if (!write_control_status(0x02, 0x80)) return false; // CTRLA.IBDLY
+		if (read_control_status(0x00) < 0) return false; // STATUSA, read the UPDI revision field (UPDIREV).
+		return read_control_status(0x0b) >= 0; // ASI_SYS_STATUS, read the current system state.
+	}
+
+	bool wait_for_reset(int timeout_ms)
+	{
+		constexpr uint8_t ASI_SYS_STATUS = 0x0b;
+		constexpr uint8_t SYSRST = 0x20;
+		for (int i = 0; i < timeout_ms; i++) {
+			int status = updi_LDCS(ASI_SYS_STATUS, 1);
+			if (status < 0) continue;
+			if (!(status & SYSRST)) return true;
+		}
+		return false;
 	}
 public:
 	void setup(Connection *conn)
 	{
 		conn_ = conn;
 	}
-	void cmd_debug()
+	bool cmd_debug()
 	{
-		size_t offset = 0;
-
-		auto PrintByte = [&](uint8_t c){
-			if (offset & 0xf) {
-				putchar(' ');
-			} else {
-				if (offset != 0) putchar('\n');
-				printf("%04x: ", (unsigned int)offset);
-			}
-			offset++;
-			printf("%02x", (unsigned int)c);
-		};
+		// Check that the UPDI link is functional by sending a break and configuring the UPDI interface. Retry up to 10 times if the link is not functional.
 		
-		auto Receive = [&](int timeout_ms){
+		{
+			int i = 0;
 			while (1) {
-				uint8_t tmp[256];
-				int n = conn_->read(tmp, sizeof(tmp), timeout_ms);
-				if (n <= 0) break;
-				for (int i = 0; i < n; i++) {
-					PrintByte(tmp[i]);
+				send_break();
+				receive_all(default_timeout());
+				if (configure_and_check_updi_link()) break;
+				if (i < 10) {
+					i++;
+				} else {
+					fprintf(stderr, "UPDI link is not functional; check the target device and connection\n");
 				}
 			}
-		};
-
-		auto ReadControlStatus = [&](uint8_t addr){
-			int c = updi_LDCS(addr);
-			if (c >= 0) {
-				PrintByte(c);
-			} else {
-				fprintf(stderr, "failed to read UPDI register 0x%02x\n", (unsigned int)addr);
-			}
-		};
-
-		auto WriteControlStatus = [&](uint8_t addr, uint8_t value){
-			if (!updi_STCS(addr, value)) {
-				fprintf(stderr, "failed to verify STCS echo for UPDI register 0x%02x\n", (unsigned int)addr);
-			}
-		};
-		
-		auto SendBreak = [&](){
-			write_command(conn_, CMD_UPDI_BREAK);
-			Receive(100);
-		};
-		
-		auto SendData = [&](uint8_t c){
-			write_command(conn_, CMD_LOAD_7BITS | (c & 0x7f));
-			write_command(conn_, (c & 0x80) ? CMD_DATA1 : CMD_DATA0);
-		};
-		
-		SendBreak();
+		}
 		
 		// for AVR64DD28
-
-#if 1
-		WriteControlStatus(0x03, 0x08); // CTRLB, disable collision and contention detection (CCDETDIS).
-		WriteControlStatus(0x02, 0x80); // CTRLA, enable the inter-byte delay for multi-byte LD/LDS (IBDLY).
-		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xe6); // KEY with SIB=1 and SIZE_C=2, request the 32-byte System Information Block.
-		Receive(5);
-#endif
-
-#if 1
-		WriteControlStatus(0x03, 0x08); // CTRLB, disable collision and contention detection (CCDETDIS).
-		WriteControlStatus(0x02, 0x80); // CTRLA, enable the inter-byte delay for multi-byte LD/LDS (IBDLY).
-		ReadControlStatus(0x00); // STATUSA, read the UPDI revision field (UPDIREV).
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-#endif
-
-#if 1
-		WriteControlStatus(0x08, 0x59); // ASI_RESET_REQ, assert system reset.
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
-		Receive(5);
-		// Send the ASCII key "NVMProg " least-significant byte first.
-		SendData(0x20); // NVMPROG key byte 0 (space).
-		SendData(0x67); // NVMPROG key byte 1 ('g').
-		SendData(0x6f); // NVMPROG key byte 2 ('o').
-		SendData(0x72); // NVMPROG key byte 3 ('r').
-		SendData(0x50); // NVMPROG key byte 4 ('P').
-		SendData(0x4d); // NVMPROG key byte 5 ('M').
-		SendData(0x56); // NVMPROG key byte 6 ('V').
-		SendData(0x4e); // NVMPROG key byte 7 ('N').
-		Receive(5);
-
-#endif
-
-#if 1
-		ReadControlStatus(0x07); // ASI_KEY_STATUS, read whether the NVMPROG key was accepted.
-#endif
-
-#if 1
-		WriteControlStatus(0x08, 0x59); // ASI_RESET_REQ, assert system reset.
-		WriteControlStatus(0x08, 0x00); // ASI_RESET_REQ, clear the system reset request.
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-		ReadControlStatus(0x0b); // ASI_SYS_STATUS, read reset, programming and lock status.
-
-#endif
 		
-		// read signature bytes
-#if 0
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
-		SendData(0x00); // Low address byte of SIGROW.DEVICEID0 (0x1100).
-		SendData(0x11); // High address byte of SIGROW.DEVICEID0 (0x1100).
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
-		SendData(0x01); // Low address byte of SIGROW.DEVICEID1 (0x1101).
-		SendData(0x11); // High address byte of SIGROW.DEVICEID1 (0x1101).
-		Receive(5);
-		SendData(0x55); // SYNCH frame before each UPDI instruction.
-		SendData(0x04); // LDS, read one byte using a 16-bit direct address (low byte first).
-		SendData(0x02); // Low address byte of SIGROW.DEVICEID2 (0x1102).
-		SendData(0x11); // High address byte of SIGROW.DEVICEID2 (0x1102).
-		Receive(5);
-#else
-		putchar('\n');
-		uint32_t sig = 0;
-		uint8_t tmp[3];
-		uint16_t addr = 0x1100; // SIGROW.DEVICEID0
-		int i = 0;
-		for (i = 0; i < 3; i++) {
-			int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2
-			if (c < 0) break;
-			tmp[i] = c;
+		// Request the 32-byte System Information Block (SIB) to verify that the UPDI link is functional.
+		{
+			send_byte(0x55); // SYNCH frame before each UPDI instruction.
+			send_byte(0xe6); // KEY with SIB=1 and SIZE_C=2, request the 32-byte System Information Block.
+			receive_all(default_timeout());
 		}
-		if (i == 3) {
-			sig = (tmp[0] << 16) | (tmp[1] << 8) | tmp[2];
+		
+		if (!configure_and_check_updi_link()) return false;
+		
+		// Request the 64-bit NVMPROG key to enable flash programming on devices that require it.
+		
+		{
+			
+			if (!write_control_status(0x08, 0x59)) { // ASI_RESET_REQ, assert system reset.
+				write_control_status(0x08, 0x00); // The reset may have been asserted despite the missing echo.
+				return false;
+			}
+			
+			send_byte(0x55); // SYNCH frame before each UPDI instruction.
+			send_byte(0xe0); // KEY with SIB=0 and SIZE_C=0, receive the 64-bit NVMPROG key.
+			
+			// Send the ASCII key "NVMProg " least-significant byte first.
+			static constexpr std::string_view key = "NVMProg ";
+			for (int i = key.size(); i > 0; i--) {
+				send_byte(key[i - 1]);
+			}
+			receive_all(default_timeout());
+			
+			constexpr uint8_t NVMPROG = 1 << 4;
+			int key_status = read_control_status(0x07); // ASI_KEY_STATUS
+			if (key_status < 0 || !(key_status & NVMPROG)) {
+				if (key_status >= 0) fprintf(stderr, "UPDI NVMPROG key was not accepted\n");
+				write_control_status(0x08, 0x00); // Release the reset held during the key transfer.
+				return false;
+			}
+		}
+
+		// Request a system reset to ensure that the device is in a known state.
+		
+		{
+			bool reset_requested = write_control_status(0x08, 0x59); // ASI_RESET_REQ, assert system reset.
+			// Release reset even if the echo of the reset assertion was lost.
+			bool reset_released = write_control_status(0x08, 0x00);
+			if (!reset_requested || !reset_released) return false;
+			int timeout_ms = 100;
+			if (!wait_for_reset(timeout_ms)) {
+				fprintf(stderr, "UPDI reset did not complete within %d ms\n", timeout_ms);
+				return false;
+			}
+		}
+		
+		// Read the 24-bit device signature from the signature row.
+		
+		uint32_t sig = 0;
+		{
+			uint8_t tmp[3];
+			uint16_t addr = 0x1100; // SIGROW.DEVICEID0
+			int i = 0;
+			for (i = 0; i < 3; i++) {
+				int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2
+				if (c < 0) break;
+				tmp[i] = c;
+			}
+			if (i == 3) {
+				sig = (tmp[0] << 16) | (tmp[1] << 8) | tmp[2];
+			}
+		}
+		
+		putchar('\n');
+		if ((sig >> 16) == 0x1e) { // AVR signature prefix
 			printf("signature: 0x%06x\n", sig);
 		} else {
 			fprintf(stderr, "failed to read signature bytes\n");
+			return false;
 		}
-#endif
+		
+		return true;
 	}
 };
 
-void updi_debug(Connection *conn)
+bool updi_debug(Connection *conn)
 {
 	AvrUpdi updi;
 	updi.setup(conn);
-	updi.cmd_debug();
+	return updi.cmd_debug();
 }
 
 bool updi_perform(Operation const &op, Connection *conn)
@@ -1188,11 +1219,11 @@ bool updi_perform(Operation const &op, Connection *conn)
 	
 	if (op.command == CMD_DEBUG) {
 		
-		updi_debug(conn);
+		bool ok = updi_debug(conn);
 		
 		conn->sync(); // exit updi mode
 		putchar('\n');
-		return true;
+		return ok;
 	}
 	return false;
 }
@@ -1312,8 +1343,7 @@ private:
 		if (!usable_) return false;
 		if (sent_ == 0 || sent_ == request_.size()) return true;
 		// Only these two-byte control requests can be safely completed.
-		if (request_.size() == 2 && (request_[0] == GetSync || request_[0] == EnterProgramming
-			|| request_[0] == LeaveProgramming || request_[0] == ReadSignature)) {
+		if (request_.size() == 2 && (request_[0] == GetSync || request_[0] == EnterProgramming || request_[0] == LeaveProgramming || request_[0] == ReadSignature)) {
 			if (write_request()) return true;
 		}
 		error_ = "incomplete request; programming mode release cannot be confirmed; connection closed";
