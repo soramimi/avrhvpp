@@ -29,6 +29,9 @@ enum Command {
 	_CMD_WRITE_HEX = 0x101,
 	_CMD_READ_HEX = 0x102,
 	_CMD_QUERY = 0x103,
+	_CMD_READ_NAMED_FUSE = 0x104,
+	_CMD_WRITE_NAMED_FUSE = 0x105,
+	_CMD_ERASE_LOCKED = 0x106,
 };
 
 enum class ProtocolError : uint8_t {

@@ -5,11 +5,11 @@ ATmega32U2 で動作する、AVR マイコン用の +12V 高電圧パラレル�
 
 ヒューズ設定の誤りで ISP が使えなくなったチップ（SPIEN 無効、DWEN 有効など）の読み出しと復旧を主な目的としています。
 
-ホストツールは、対応する7チップでシグネチャ、ヒューズ／ロック、Flashページ／Intel HEXの読み書きとチップ消去に対応します。ATmegaの5チップはHVPP／AVRISPに、ATtiny2313／ATtiny13AはAVRISPのみに対応します。2026-11-10、ユーザーがATmegaの5チップについてHVPP／AVRISPの全対応コマンドを実機確認し、問題がないことを報告しました。当時のAVRISP拡張の実装計画は全工程完了・クローズしています。今回追加したATtinyの2チップは実機未確認です。ホストツールとHVPPのEEPROM読み書きは未実装です。
+ホストツールは、シグネチャ、ヒューズ／ロック、Flashページ／Intel HEXの読み書きとチップ消去に対応します。ATmegaの5チップはHVPP／AVRISPに、ATtiny2313／ATtiny13AはAVRISPに対応します。ATtiny202、AVR64DD28、AVR64DD32、AVR64DU32には実験的なUPDI対応があります。2026-11-10、ユーザーがATmegaの5チップについてHVPP／AVRISPの全対応コマンドを実機確認し、問題がないことを報告しました。当時のAVRISP拡張の実装計画は全工程完了・クローズしています。ATtiny2313／ATtiny13Aは実機未確認です。ホストツールとHVPPのEEPROM読み書きは未実装です。
 
 ## 対応ターゲット
 
-Flashのページ／Intel HEX操作は`--target <name>`で次のターゲットを指定します。
+HVPP／AVRISPのFlashページ／Intel HEX操作は`--target <name>`で次のターゲットを指定します。UPDIの対象は[ホストツール（実験的なUPDI）](#ホストツール実験的なupdi)を参照してください。
 
 | ターゲット | シグネチャ | Flash容量 | ページサイズ | ページ数 | プログラマ種別 |
 |---|---|---|---|---|---|
@@ -87,11 +87,11 @@ make readfuse   # ATmega32U2 のヒューズを読み出し
 
 ### ホストツール
 
-C++17 のコンパイラが必要です。Qt Creator で `app/avrisp.pro` を開くか、次のようにビルドします。
+C++17 のコンパイラが必要です。Qt Creator で `app/avrhvpp.pro` を開くか、次のようにビルドします。
 
 ```sh
 cd app
-g++ -std=c++17 -Wall -Wextra main.cpp serial.cpp -o avrhvpp
+g++ -std=c++17 -Wall -Wextra main.cpp serial.cpp Connection.cpp AvrIsp.cpp AvrUpdi.cpp -o avrhvpp
 ```
 
 ## 自動確認と確認状況
@@ -106,12 +106,13 @@ make -C tests
 |---|---|
 | `tests/protocol.cpp` | 実際のホスト処理とHVPPファームウェアを模擬GPIOで接続。AVRISPはシリアル・ターゲットモデルで分割送受信、7チップの読み書き・消去・HEX、事前確認、異常応答・期限切れ・終了処理を検証。ATtinyのHVPP指定拒否、ヒューズ構成とSPIEN保護も確認 |
 | `tests/stk500.cpp` | 変更していないファームウェアの`main.cpp`を使用し、USBバッファ・STK500解析・SPI処理を検証。7チップの標準設定、シグネチャ、ヒューズ／ロック、ページ転送、消去後再初期化、終了、モード切り替えを確認 |
+| `tests/updi.cpp` | 模擬シリアルブリッジとNVMを使い、ATtiny202／AVR64DD／AVR64DUのCLI操作、分割送受信、書き込み照合、消去、ロック済みチップの復旧と終了失敗を検証 |
 
 STK500の要求列は[avrdude v8.1の実装](https://github.com/avrdudes/avrdude/blob/v8.1/src/stk500.c)とAVR061に基づいて構成した固定データです。実機で採取した通信ログではありません。USB入力を1／7／16バイトに分割し、ページ境界・最終ページ、最大256バイト転送とデータ中の制御値も確認します。
 
-異常系テストでは想定したエラーメッセージを出力します。終了コード0と、`Protocol integration and boundary tests passed without hardware.`および`STK500v1 firmware compatibility fixtures passed without hardware.`の合格表示を確認してください。
+異常系テストでは想定したエラーメッセージを出力します。`make -C tests`の終了コード0と、各テストの`passed without hardware.`の合格表示を確認してください。
 
-サニタイザ付きで両テストを実行する場合は次を使います（LeakSanitizerは実行環境の制約により無効化）。
+サニタイザ付きでテストを実行する場合は次を使います（LeakSanitizerは実行環境の制約により無効化）。
 
 ```sh
 ASAN_OPTIONS=detect_leaks=0 make -C tests CXXFLAGS='-std=c++17 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer' TEST_BINARY=/tmp/avrhvpp-sanitized
@@ -232,6 +233,31 @@ lock bits: 0xfc
 
 コマンドの指定は必須です。書き込み値は16進数で、`0x62`または`62`のように00～FFの範囲で指定します。複数の操作を指定した場合は左から順に実行し、失敗した時点で停止します。ポートや通信速度を含む全引数を検証してから接続するため、オプションの記述順に制約はありません。
 
+### ホストツール（実験的なUPDI）
+
+`--device updi` と次の `--target` を指定します。Intel HEX のアドレスは各チップの Flash 先頭を `0x0000` として扱います。
+
+| ターゲット | シグネチャ | Flash | ページサイズ | ページ番号 |
+|---|---|---:|---:|---:|
+| `attiny202` | `1E 91 23` | 2 KiB | 64バイト | 0～31 |
+| `avr64dd28` | `1E 96 1B` | 64 KiB | 512バイト | 0～127 |
+| `avr64dd32` | `1E 96 1A` | 64 KiB | 512バイト | 0～127 |
+| `avr64du32` | `1E 96 21` | 64 KiB | 512バイト | 0～127 |
+
+```sh
+avrhvpp -p /dev/ttyACM0 -d updi -t attiny202 --query --read-page 31 page31.bin
+avrhvpp -p /dev/ttyACM0 -d updi -t attiny202 --read-hex backup.hex
+avrhvpp -p /dev/ttyACM0 -d updi -t avr64du32 --query --read-page 127 page127.bin
+```
+
+- `--read-signature`、`--read-lock`、`--read-fuse <名前>` で個別に読み出せます。共通のヒューズ名は `WDTCFG`、`BODCFG`、`OSCCFG`、`SYSCFG0`、`SYSCFG1` です。ATtiny202 は `APPEND`／`BOOTEND`、AVR64DD／DU は `CODESIZE`／`BOOTSIZE` も使えます。`--write-fuse <名前> <値>` は保護ビットや予約値を検証し、読み戻した後にセッション終了時のリセットで反映します。AVR64DU32 の `PDICFGL`／`PDICFGH` は読み出し専用です。
+- `--write-page` は一致済みのページを省略し、消去済みのページに書き込みます。`--write-hex` は既定で消去します。`--no-chip-erase` では全対象ページを先に確認し、書き込み後はページ全体を照合します。
+- `--chip-erase` は事前にシグネチャを照合し、Flash を消去します。EEPROM は `EESAVE` が設定されている場合に保持されます。
+- ロック済みチップでは `--read-lock` で状態を取得できます。`--erase-locked` は Flash と EEPROM を消去し、消去後にロック解除、シグネチャと全 Flash を確認します。`--write-lock 0x00` は操作列の最後に指定し、リセット後にロック状態を確認します。AVR64DD／DU の `--write-lock` は32ビットの値を受け付けます。AVR64DU32 では、ロックによって `PDICFG` の NVM アクセス制限が有効になる場合は書き込みを拒否します。
+- AVR64DU32 では、通常の消去時に `BROWSAVE` がクリアされていると Boot Row も消去されます。ロック済みチップの消去では `BROWSAVE` にかかわらず Boot Row も消去されます。 [AVR64DU28/32 データシート](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/AVR64DU-28-32-DataSheet-DS40002548.pdf)
+- ATtiny202 の実機では、ユーザーが `example/attiny202.mk` でページ 0・1 の読み出しと通常消去後の書き戻し、HEX の書き込み・再書き込み、`--no-chip-erase` で一致するページの省略と残りのページの書き込み、`SYSCFG0` の EESAVE クリアとリセット後の読み戻し、ロック書き込みとロック済みチップの消去・復旧を確認しました。
+- AVR64DD28／AVR64DD32／AVR64DU32 は模擬通信で確認済みです。3機種の実機確認は未実施です。 [AVR64DD32/28 データシート](https://www.microchip.com/content/dam/mchp/documents/MCU08/ProductDocuments/DataSheets/AVR64DD32-28-Complete-DataSheet-DS40002315.pdf) · [AVR64DU28/32 データシート](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/AVR64DU-28-32-DataSheet-DS40002548.pdf)
+
 ## 通信プロトコル
 
 ### モードの切り替え
@@ -239,6 +265,7 @@ lock bits: 0xfc
 | 送信 | 応答 | 動作 |
 |---|---|---|
 | `.AVRHVPP.` | `AVRHVPP\r\n` | AVRHVPP モードに切り替え |
+| `.AVRUPDI.` | `AVRUPDI\r\n` | 実験的な UPDI ブリッジモードに切り替え |
 | `.BITBANG.` | `BITBANG\r\n` | BITBANG モード（ISP ピンの直接操作）に切り替え |
 | 0x40 未満のバイト | — | どのモードからでも STK500 モードに戻る |
 
@@ -314,8 +341,8 @@ AVRHVPPモードのシグネチャ、ヒューズ、ロックビット、Flash�
 
 ## 制約と今後の課題
 
-- Flash読み書きは上記7種類のターゲット定義に対応しています（ATtinyの2チップはAVRISPのみ）。別チップを追加するときは、シグネチャ、Flash容量、ページサイズ、ページ数、対応するプログラミング方式のアドレス指定と書き込み手順をデータシートで確認し、ターゲット定義として追加します。
-- ページ番号はホスト内で16ビットとして扱い、通信では開始ワードアドレスと処理バイト数へ変換します。有効なページ番号、ファイルサイズ、HEXの範囲はホストが選択ターゲットの定義に基づいて検証します。
+- チップを追加するときは、シグネチャ、Flash容量、ページサイズ、ページ数、対応するプログラミング方式のアドレス指定と書き込み手順をデータシートで確認し、ターゲット定義として追加します。
+- ページ番号はホスト内で16ビットとして扱い、HVPP／AVRISPではワードアドレス、UPDIではバイトアドレスへ変換します。有効なページ番号、ファイルサイズ、HEXの範囲はホストが選択ターゲットの定義に基づいて検証します。
 - `CMD_DEBUG`の応答は無効です。ホストツールとHVPPのEEPROM読み書きは未実装です。既存STK500のEEPROM処理は今回の拡張・検証の対象外です。
 - 0x40未満でSTK500モードへ戻る仕様を維持するため、任意の8ビット値は `CMD_LOAD_7BITS` と `CMD_DATA0` / `CMD_DATA1` などを使って0x40以上のバイトへ符号化します。
 - プログラミングモードへは、VCC を常時供給したまま XTAL1 を 6 回トグルし、+12V を印加する方式で入ります。RSTDISBL がプログラムされたチップでは、ターゲットのプログラムが動いたままになり、モードに入れない可能性があります。対応するには VCC の切り替え回路と、より速い +12V のスイッチが必要です。

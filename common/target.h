@@ -28,8 +28,26 @@ struct IspParameters {
 	uint8_t lock_mask;
 };
 
+struct UpdiFuse {
+	char const *name;
+	uint8_t offset;
+	uint8_t mask;
+	uint8_t write_mask;
+	bool (*valid_value)(uint8_t) = nullptr;
+};
+
 struct UpdiParameters {
 	uint16_t sigrow_address = 0;
+	uint32_t flash_address = 0;
+	uint16_t nvmctrl_address = 0;
+	uint16_t fuse_address = 0;
+	UpdiFuse const *fuses = nullptr;
+	uint8_t fuse_count = 0;
+	uint16_t lock_address = 0;
+	uint32_t unlocked_value = 0;
+	uint8_t lock_bytes = 1;
+	uint8_t nvm_version = 0;
+	uint8_t pdicfg_offset = 0;
 };
 
 struct TargetDefinition {
@@ -181,48 +199,110 @@ constexpr TargetDefinition TargetATtiny13A = {
 
 // wip: experimental UPDI support
 
+constexpr bool attiny202_watchdog_config(uint8_t value)
+{
+	return (value & 0x0f) <= 0x0b && (value >> 4) <= 0x0b;
+}
+
+constexpr bool attiny202_bod_config(uint8_t value)
+{
+	uint8_t level = value >> 5;
+	return (level == 0 || level == 2 || level == 7) && (value & 0x03) != 0x03;
+}
+
+constexpr bool attiny202_oscillator_config(uint8_t value)
+{
+	return (value & 0x03) == 1 || (value & 0x03) == 2;
+}
+
+constexpr bool attiny202_flash_boundary(uint8_t value)
+{
+	return value <= 8; // Flash is 2 KiB, in units of 256 bytes for these fuses.
+}
+
+constexpr UpdiFuse ATtiny202Fuses[] = {
+	{"WDTCFG", 0x00, 0xff, 0xff, attiny202_watchdog_config},
+	{"BODCFG", 0x01, 0xff, 0xff, attiny202_bod_config},
+	{"OSCCFG", 0x02, 0x83, 0x03, attiny202_oscillator_config}, // Preserve OSCLOCK.
+	{"SYSCFG0", 0x05, 0xcd, 0xc1}, // Preserve RSTPINCFG.
+	{"SYSCFG1", 0x06, 0x07, 0x07},
+	{"APPEND", 0x07, 0xff, 0xff, attiny202_flash_boundary},
+	{"BOOTEND", 0x08, 0xff, 0xff, attiny202_flash_boundary},
+};
+
 constexpr TargetDefinition TargetATtiny202 = {
 	"ATtiny202",
 	{0x1e, 0x91, 0x23},
-	0,
-	0,
-	// CapabilityFlash
-	CapabilityUpdi,	
+	64,
+	32,
+	CapabilityUpdi | CapabilityFlash | CapabilityLockBits | CapabilityChipErase,
 	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
-	{0x1100},
+	{0x1100, 0x8000, 0x1000, 0x1280, ATtiny202Fuses, sizeof(ATtiny202Fuses) / sizeof(ATtiny202Fuses[0]), 0x128a, 0xc5},
+};
+
+constexpr bool avr64d_bod_config(uint8_t value)
+{
+	return (value >> 5) <= 3 && (value & 0x03) != 0x03;
+}
+
+constexpr bool avr64d_oscillator_config(uint8_t value)
+{
+	return (value & 0x07) <= 1;
+}
+
+constexpr bool avr64d_flash_boundary(uint8_t value)
+{
+	return value <= 128; // Sizes are in 512-byte Flash pages.
+}
+
+constexpr UpdiFuse AVR64DDFuses[] = {
+	{"WDTCFG", 0x00, 0xff, 0xff, attiny202_watchdog_config},
+	{"BODCFG", 0x01, 0xff, 0xff, avr64d_bod_config},
+	{"OSCCFG", 0x02, 0x07, 0x07, avr64d_oscillator_config},
+	{"SYSCFG0", 0x05, 0xf9, 0xe1}, // Preserve UPDIPINCFG and RSTPINCFG.
+	{"SYSCFG1", 0x06, 0x1f, 0x07}, // Preserve MVIO configuration.
+	{"CODESIZE", 0x07, 0xff, 0xff, avr64d_flash_boundary},
+	{"BOOTSIZE", 0x08, 0xff, 0xff, avr64d_flash_boundary},
+};
+
+constexpr UpdiFuse AVR64DUFuses[] = {
+	AVR64DDFuses[0],
+	AVR64DDFuses[1],
+	AVR64DDFuses[2],
+	{"SYSCFG0", 0x05, 0xfb, 0xe3}, // Preserve UPDIPINCFG and RSTPINCFG.
+	{"SYSCFG1", 0x06, 0x0f, 0x0f},
+	AVR64DDFuses[5],
+	AVR64DDFuses[6],
+	{"PDICFGL", 0x0a, 0xf3, 0},
+	{"PDICFGH", 0x0b, 0xff, 0},
+};
+
+constexpr UpdiParameters AVR64DDUpdi = {
+	0x1100, 0x800000, 0x1000, 0x1050, AVR64DDFuses,
+	sizeof(AVR64DDFuses) / sizeof(AVR64DDFuses[0]), 0x1040, 0x5cc5c55c, 4, 2
+};
+
+constexpr UpdiParameters AVR64DUUpdi = {
+	0x1080, 0x800000, 0x1000, 0x1050, AVR64DUFuses,
+	sizeof(AVR64DUFuses) / sizeof(AVR64DUFuses[0]), 0x1040, 0x5cc5c55c, 4, 4, 0x0a
 };
 
 constexpr TargetDefinition TargetAVR64DD28 = {
-	"AVR64DD28",
-	{0x1e, 0x96, 0x1b},
-	0,
-	0,
-	// CapabilityFlash
-	CapabilityUpdi,	
-	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
-	{0x1100},
+	"AVR64DD28", {0x1e, 0x96, 0x1b}, 512, 128,
+	CapabilityUpdi | CapabilityFlash | CapabilityLockBits | CapabilityChipErase,
+	{}, AVR64DDUpdi,
 };
 
 constexpr TargetDefinition TargetAVR64DD32 = {
-	"AVR64DD32",
-	{0x1e, 0x96, 0x1a},
-	0,
-	0,
-	// CapabilityFlash
-	CapabilityUpdi,	
-	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
-	{0x1100},
+	"AVR64DD32", {0x1e, 0x96, 0x1a}, 512, 128,
+	CapabilityUpdi | CapabilityFlash | CapabilityLockBits | CapabilityChipErase,
+	{}, AVR64DDUpdi,
 };
-	
+
 constexpr TargetDefinition TargetAVR64DU32 = {
-	"AVR64DU32",
-	{0x1e, 0x96, 0x21},
-	0,
-	0,
-	// CapabilityFlash
-	CapabilityUpdi,	
-	{0, 0, 0, 0, 0, false, 0, 0, {0, 0, 0}, {0, 0, 0}, 0},
-	{0x1080},
+	"AVR64DU32", {0x1e, 0x96, 0x21}, 512, 128,
+	CapabilityUpdi | CapabilityFlash | CapabilityLockBits | CapabilityChipErase,
+	{}, AVR64DUUpdi,
 };
 
 //

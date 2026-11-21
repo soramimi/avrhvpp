@@ -46,6 +46,7 @@ struct Options {
 	Serial::Option serial_options;
 	std::unique_ptr<Target> target;
 	bool chip_erase_before_write_hex = true;
+	bool help = false;
 };
 
 bool parse_device_type(std::string_view name, Device *device)
@@ -57,21 +58,29 @@ bool parse_device_type(std::string_view name, Device *device)
 	} else if (name == "avrisp") {
 		*device = Device::AVRISP;
 	} else {
-		fprintf(stderr, "unknown device type: %.*s (available: hvpp, avrisp)\n", (int)name.size(), name.data());
+		fprintf(stderr, "unknown device type: %.*s (available: hvpp, avrisp, updi)\n", (int)name.size(), name.data());
 		return false;
 	}
 	return true;
 }
 
-bool parse_byte(char const *text, uint8_t *value)
+bool parse_hex_value(char const *text, uint32_t limit, uint32_t *value)
 {
 	errno = 0;
 	char *end;
-	unsigned long v = strtoul(text, &end, 16);
-	if (errno || end == text || *end || v > 0xff) {
+	unsigned long long v = strtoull(text, &end, 16);
+	if (errno || end == text || *end || v > limit || std::string_view(text).find('-') != std::string_view::npos) {
 		return false;
 	}
-	*value = (uint8_t)v;
+	*value = static_cast<uint32_t>(v);
+	return true;
+}
+
+bool parse_byte(char const *text, uint8_t *value)
+{
+	uint32_t parsed;
+	if (!parse_hex_value(text, 0xff, &parsed)) return false;
+	*value = static_cast<uint8_t>(parsed);
 	return true;
 }
 
@@ -424,6 +433,10 @@ bool query_target(ReadStatus read_status, Emit emit, bool hvpp)
 		target->display_name, (unsigned int)target->flash_page_bytes,
 		(unsigned int)target->flash_page_count, (unsigned long)target->flash_bytes());
 	emit(text);
+	if (target->supports(CapabilityUpdi)) {
+		fprintf(stderr, "%s requires --device updi\n", target->display_name);
+		return false;
+	}
 	if (hvpp && !target->supports(CapabilityHvpp)) {
 		fprintf(stderr, "%s requires --device avrisp; HVPP is not supported\n", target->display_name);
 		return false;
@@ -628,8 +641,7 @@ bool perform_flash_operation(Operation const &op, Flash &flash, std::string *tex
 	}
 	auto const &target = op.target->definition();
 	if (op.command == CMD_READ_PAGE || op.command == CMD_WRITE_PAGE) {
-		FlashParameters parameters;
-		if (!make_flash_parameters(op.data, *op.target, &parameters)) return false;
+		if (op.data >= target.flash_page_count) return false;
 		if (op.command == CMD_READ_PAGE) {
 			std::vector<uint8_t> data;
 			if (!flash.read_page(op.data, &data) || !write_page_file(op.path.c_str(), data)) return false;
@@ -760,30 +772,123 @@ bool hvpp_perform(Operation const &op, Connection *conn)
 	}
 }
 
-bool updi_perform(Operation const &op, Connection *conn)
+bool updi_supports(Command command)
 {
-	if (!conn->enter_avrupdi_mode()) {
-		fprintf(stderr, "failed to enter avrupdi mode\n");
+	switch (command) {
+	case CMD_DEBUG:
+	case CMD_READ_SIGNATURE:
+	case _CMD_QUERY:
+	case _CMD_READ_NAMED_FUSE:
+	case _CMD_WRITE_NAMED_FUSE:
+	case CMD_READ_LOCK:
+	case CMD_WRITE_LOCK:
+	case CMD_READ_PAGE:
+	case CMD_WRITE_PAGE:
+	case _CMD_READ_HEX:
+	case _CMD_WRITE_HEX:
+	case CMD_CHIP_ERASE:
+	case _CMD_ERASE_LOCKED:
+		return true;
+	default:
 		return false;
 	}
-	
-	if (op.command == CMD_DEBUG) {
-		
-		bool ok = false;
-		{
-			AvrUpdi updi;
-			updi.setup(&op, conn);
-			ok = updi.cmd_debug();
+}
+
+bool updi_operation(Operation const &op, AvrUpdi &updi, std::string *text)
+{
+	auto const &target = op.target->definition();
+	char message[128];
+	switch (op.command) {
+	case CMD_DEBUG:
+		return updi.debug(text);
+	case CMD_READ_SIGNATURE:
+	case _CMD_QUERY: {
+		bool query = op.command == _CMD_QUERY;
+		bool locked;
+		if (query && !updi.read_lock(&locked)) return false;
+		if (query && locked) {
+			*text += "lock: locked\n";
+			fprintf(stderr, "target is locked; signature and memory are unavailable\n");
+			return false;
 		}
-		
-		if (!conn->sync()) { // Exit the programmer's UPDI bridge mode.
-			fprintf(stderr, "failed to return programmer to STK500 mode\n");
-			ok = false;
+		uint8_t signature[3];
+		if (!updi.read_signature(signature)) return false;
+		snprintf(message, sizeof(message), "0x%02x, 0x%02x, 0x%02x\n", signature[0], signature[1], signature[2]);
+		if (!query) {
+			*text += message;
+			return true;
 		}
-		putchar('\n');
-		return ok;
+		*text += "signature: ";
+		*text += message;
+		if (!target.matches_signature(signature[0], signature[1], signature[2])) {
+			fprintf(stderr, "UPDI signature does not match %s\n", target.display_name);
+			return false;
+		}
+		snprintf(message, sizeof(message), "chip: %s\npage size: %u\npages: %u\nflash size: %lu\nlock: unlocked\n",
+			target.display_name, unsigned(target.flash_page_bytes), unsigned(target.flash_page_count),
+			static_cast<unsigned long>(target.flash_bytes()));
+		*text += message;
+		for (uint8_t i = 0; i < target.updi.fuse_count; ++i) {
+			auto const &fuse = target.updi.fuses[i];
+			uint8_t value;
+			if (!updi.read_fuse(fuse, &value)) return false;
+			snprintf(message, sizeof(message), "%s: 0x%02x\n", fuse.name, value);
+			*text += message;
+		}
+		return true;
 	}
-	return false;
+	case CMD_READ_LOCK: {
+		bool locked;
+		if (!updi.read_lock(&locked)) return false;
+		*text += locked ? "lock: locked\n" : "lock: unlocked\n";
+		return true;
+	}
+	case CMD_WRITE_LOCK:
+		if (!updi.write_lock(op.updi_lock_value)) return false;
+		*text += "lock: locked\n";
+		return true;
+	case _CMD_READ_NAMED_FUSE:
+	case _CMD_WRITE_NAMED_FUSE: {
+		auto const &fuse = target.updi.fuses[op.data];
+		if (op.command == _CMD_WRITE_NAMED_FUSE) {
+			if (!updi.write_fuse(fuse, op.value)) return false;
+			snprintf(message, sizeof(message), "%s: fuse value verified; takes effect on reset\n", fuse.name);
+		} else {
+			uint8_t value;
+			if (!updi.read_fuse(fuse, &value)) return false;
+			snprintf(message, sizeof(message), "%s: 0x%02x\n", fuse.name, value);
+		}
+		*text += message;
+		return true;
+	}
+	case CMD_CHIP_ERASE:
+		if (!updi.chip_erase()) return false;
+		*text += "chip erased\n";
+		return true;
+	case _CMD_ERASE_LOCKED:
+		if (!updi.erase_locked()) return false;
+		*text += "locked target erased and unlocked\n";
+		return true;
+	default:
+		return perform_flash_operation(op, updi, text);
+	}
+}
+
+bool updi_perform(std::vector<Operation> const &operations, Connection *conn)
+{
+	if (operations.empty() || !operations.front().target) return false;
+	AvrUpdi programmer(conn, operations.front().target->definition());
+	bool ok = programmer.begin();
+	if (ok) {
+		for (auto const &op : operations) {
+			std::string text;
+			ok = updi_operation(op, programmer, &text);
+			fputs(text.c_str(), stdout);
+			if (!ok) break;
+		}
+	}
+	bool finished = programmer.finish();
+	return ok && finished;
 }
 
 bool avrisp_flash_operation(Operation const &op, AvrIsp *programmer, std::string *text)
@@ -828,7 +933,7 @@ bool avrisp_read_operation(Operation const &op, AvrIsp *programmer, TargetDefini
 			if (!programmer->read_signature(signature)) return false;
 			*status_target = find_target_by_signature(signature[0], signature[1], signature[2]);
 		}
-		if (!*status_target) {
+		if (!*status_target || (*status_target)->supports(CapabilityUpdi)) {
 			fprintf(stderr, "unsupported target signature\n");
 			return false;
 		}
@@ -901,7 +1006,7 @@ bool avrisp_perform(std::vector<Operation> const &operations, Connection *conn, 
 			bool finished = probe.finish();
 			if (!ok || !finished) return false;
 			target = find_target_by_signature(signature[0], signature[1], signature[2]);
-			if (!target) {
+			if (!target || target->supports(CapabilityUpdi)) {
 				fprintf(stderr, "unsupported target signature\n");
 				return false;
 			}
@@ -954,7 +1059,7 @@ bool perform(Device device, Operation const &op, Connection *conn)
 {
 	switch (device) {
 	case Device::HVPP: return hvpp_perform(op, conn);
-	case Device::UPDI: return updi_perform(op, conn);
+	case Device::UPDI: return updi_perform({op}, conn);
 	case Device::AVRISP: return avrisp_perform(op, conn);
 	}
 	fprintf(stderr, "unsupported device type\n");
@@ -1003,6 +1108,9 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 		{"-rfe", CMD_READ_FUSE, 2, 0},
 		{"--read-fuse-extended", CMD_READ_FUSE, 2, 0},
 		{"-rl", CMD_READ_LOCK, 0, 0},
+		{"--read-fuse", _CMD_READ_NAMED_FUSE, 0, 1},
+		{"--write-fuse", _CMD_WRITE_NAMED_FUSE, 0, 2},
+		{"--erase-locked", _CMD_ERASE_LOCKED, 0, 0},
 		{"--read-lock", CMD_READ_LOCK, 0, 0},
 		{"--read-page", CMD_READ_PAGE, 0, 2},
 		{"--write-page", CMD_WRITE_PAGE, 0, 2},
@@ -1040,20 +1148,22 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 				return false;
 			}
 			if (argi >= argc || argv[argi][0] == '-') {
-				fprintf(stderr, "%.*s requires a device name (hvpp, avrisp)\n", (int)arg.size(), arg.data());
+				fprintf(stderr, "%.*s requires a device name (hvpp, avrisp, updi)\n", (int)arg.size(), arg.data());
 				return false;
 			}
 			if (!parse_device_type(argv[argi++], &opts->device)) return false;
 			device_specified = true;
 		} else if (arg == "--no-chip-erase") {
 			opts->chip_erase_before_write_hex = false;
+		} else if (arg == "--help" || arg == "-h") {
+			opts->help = true;
 		} else if (arg == "-t" || arg == "--target") {
 			if (target_specified) {
 				fprintf(stderr, "target specified more than once\n");
 				return false;
 			}
 			if (argi >= argc || argv[argi][0] == '-') {
-				fprintf(stderr, "%.*s requires a target name (atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a)\n", (int)arg.size(), arg.data());
+				fprintf(stderr, "%.*s requires a target name (atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a, attiny202, avr64dd28, avr64dd32, avr64du32)\n", (int)arg.size(), arg.data());
 				return false;
 			}
 			target_name = argv[argi++];
@@ -1092,7 +1202,7 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 	if (target_specified) {
 		opts->target = create_target(target_name);
 		if (!opts->target) {
-			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a)\n", (int)target_name.size(), target_name.data());
+			fprintf(stderr, "unknown target: %.*s (available: atmega8, atmega48, atmega88, atmega168, atmega328p, attiny2313, attiny13a, attiny202, avr64dd28, avr64dd32, avr64du32)\n", (int)target_name.size(), target_name.data());
 			return false;
 		}
 	}
@@ -1101,6 +1211,16 @@ bool parse_options(int argc, char **argv, Options *opts, std::vector<OperationAr
 
 bool build_operations(Options const &opts, std::vector<OperationArguments> const &pending, std::vector<Operation> *operations)
 {
+	bool updi = opts.device == Device::UPDI;
+	bool updi_target = opts.target && opts.target->definition().supports(CapabilityUpdi);
+	if (updi && !updi_target) {
+		fprintf(stderr, "--device updi requires a supported UPDI --target (attiny202, avr64dd28, avr64dd32, avr64du32)\n");
+		return false;
+	}
+	if (!updi && updi_target) {
+		fprintf(stderr, "%s requires --device updi\n", opts.target->definition().display_name);
+		return false;
+	}
 	if (opts.device == Device::HVPP && opts.target && !opts.target->definition().supports(CapabilityHvpp)) {
 		fprintf(stderr, "%s requires --device avrisp; HVPP is not supported\n", opts.target->definition().display_name);
 		return false;
@@ -1116,6 +1236,11 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 			fprintf(stderr, "extended fuse is not supported by the selected target\n");
 			return false;
 		}
+		bool named_fuse = option.command == _CMD_READ_NAMED_FUSE || option.command == _CMD_WRITE_NAMED_FUSE;
+		if ((updi && !updi_supports(option.command)) || (!updi && (named_fuse || option.command == _CMD_ERASE_LOCKED))) {
+			fprintf(stderr, "%.*s is not supported with the selected device\n", int(option.name.size()), option.name.data());
+			return false;
+		}
 		Operation operation;
 		operation.command = option.command;
 		operation.data = option.data;
@@ -1126,10 +1251,11 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 			return false;
 		}
 		if (flash_operation) {
-			FlashParameters parameters;
-			if (!opts.target->definition().flash_page_count
-				|| !make_flash_parameters(opts.target->definition().flash_page_count - 1, *opts.target, &parameters)) {
-				return false;
+			auto const &target = opts.target->definition();
+			if (!target.flash_page_count) return false;
+			if (opts.device == Device::HVPP) {
+				FlashParameters parameters;
+				if (!make_flash_parameters(target.flash_page_count - 1, *opts.target, &parameters)) return false;
 			}
 		}
 		if (option.command == CMD_READ_PAGE || option.command == CMD_WRITE_PAGE) {
@@ -1149,6 +1275,45 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 				}
 				operation.chip_erase = opts.chip_erase_before_write_hex;
 			}
+		} else if (named_fuse) {
+			auto const &target = opts.target->definition().updi;
+			while (operation.data < target.fuse_count && arguments.arguments[0] != target.fuses[operation.data].name) {
+				++operation.data;
+			}
+			if (operation.data == target.fuse_count) {
+				fprintf(stderr, "unknown UPDI fuse: %.*s\n", int(arguments.arguments[0].size()), arguments.arguments[0].data());
+				return false;
+			}
+			if (option.command == _CMD_WRITE_NAMED_FUSE && !parse_byte(arguments.arguments[1].data(), &operation.value)) {
+				fprintf(stderr, "--write-fuse requires a byte value\n");
+				return false;
+			}
+			auto const &fuse = target.fuses[operation.data];
+			if (option.command == _CMD_WRITE_NAMED_FUSE) {
+				if (!fuse.write_mask) {
+					fprintf(stderr, "UPDI fuse %s is read-only\n", fuse.name);
+					return false;
+				}
+				if (fuse.valid_value && !fuse.valid_value(operation.value)) {
+					fprintf(stderr, "invalid value for UPDI fuse %s\n", fuse.name);
+					return false;
+				}
+			}
+		} else if (updi && option.command == CMD_WRITE_LOCK) {
+			auto const &target = opts.target->definition().updi;
+			uint32_t limit = target.lock_bytes == 1 ? 0xff : UINT32_MAX;
+			if (!parse_hex_value(arguments.arguments[0].data(), limit, &operation.updi_lock_value)) {
+				fprintf(stderr, "UPDI --write-lock requires a %u-bit hex value\n", unsigned(target.lock_bytes) * 8);
+				return false;
+			}
+			if (&arguments != &pending.back()) {
+				fprintf(stderr, "UPDI --write-lock must be the last operation\n");
+				return false;
+			}
+			if (operation.updi_lock_value == target.unlocked_value) {
+				fprintf(stderr, "UPDI lock cannot be cleared using --write-lock; use --erase-locked to erase and unlock\n");
+				return false;
+			}
 		} else if (option.command == CMD_WRITE_FUSE || option.command == CMD_WRITE_LOCK) {
 			if (!parse_byte(arguments.arguments[0].data(), &operation.value)) {
 				fprintf(stderr, "%.*s requires a byte value\n", (int)option.name.size(), option.name.data());
@@ -1164,14 +1329,33 @@ bool build_operations(Options const &opts, std::vector<OperationArguments> const
 	return true;
 }
 
+void print_usage()
+{
+	puts("Usage: avrhvpp --port PORT [--device hvpp|avrisp|updi] [--target CHIP] OPERATIONS\n"
+		"Operations: --query, --read-signature, --read-lock, --read-page PAGE FILE,\n"
+		"  --write-page PAGE FILE, --read-hex FILE, --write-hex FILE, --chip-erase\n"
+		"UPDI targets: attiny202, avr64dd28, avr64dd32, avr64du32.\n"
+		"UPDI also supports --debug,\n"
+		"  --read-fuse NAME, --write-fuse NAME BYTE, --write-lock HEX and --erase-locked.\n"
+		"  --write-lock 0x00 locks the target and must be the last operation.\n"
+		"  --write-hex erases by default. Use --no-chip-erase to skip erase.\n"
+		"  Normal UPDI chip erase also clears EEPROM unless EESAVE is set.\n"
+		"  --erase-locked clears Flash and EEPROM without prior signature verification.\n"
+		"  On AVR64DU32, chip erase can also clear the Boot Row; see README.md.\n"
+		"See README.md for device-specific operations.");
+}
+
 int main(int argc, char **argv)
 {
 	Options opts;
 	std::vector<OperationArguments> pending;
 	std::vector<Operation> operations;
-	if (!parse_options(argc, argv, &opts, &pending) || !build_operations(opts, pending, &operations)) {
-		return 1;
+	if (!parse_options(argc, argv, &opts, &pending)) return 1;
+	if (opts.help) {
+		print_usage();
+		return 0;
 	}
+	if (!build_operations(opts, pending, &operations)) return 1;
 
 #ifdef _WIN32
 	if (strncmp(opts.serial_options.port.c_str(), "COM", 3) == 0) {
@@ -1186,6 +1370,11 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if (opts.device == Device::UPDI) {
+		bool ok = updi_perform(operations, &conn);
+		conn.close();
+		return ok ? 0 : 1;
+	}
 	if (opts.device == Device::AVRISP) {
 		bool ok = avrisp_perform(operations, &conn, opts.target ? &opts.target->definition() : nullptr);
 		conn.close();

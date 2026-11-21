@@ -66,6 +66,15 @@ inline std::unique_ptr<Target> create_target(std::string_view name)
 	if (name == "attiny202") {
 		return std::make_unique<Target>(TargetATtiny202, "attiny202");
 	}
+	if (name == "avr64dd28") {
+		return std::make_unique<Target>(TargetAVR64DD28, "avr64dd28");
+	}
+	if (name == "avr64dd32") {
+		return std::make_unique<Target>(TargetAVR64DD32, "avr64dd32");
+	}
+	if (name == "avr64du32") {
+		return std::make_unique<Target>(TargetAVR64DU32, "avr64du32");
+	}
 	return nullptr;
 }
 

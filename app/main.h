@@ -23,6 +23,7 @@ struct Operation {
 	Command command;
 	uint16_t data = 0;
 	uint8_t value = 0;
+	uint32_t updi_lock_value = 0;
 	std::string path;
 	std::vector<uint8_t> bytes;
 	std::vector<uint8_t> page_mask;
