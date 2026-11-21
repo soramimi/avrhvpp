@@ -776,7 +776,10 @@ bool updi_perform(Operation const &op, Connection *conn)
 			ok = updi.cmd_debug();
 		}
 		
-		conn->sync(); // exit updi mode
+		if (!conn->sync()) { // Exit the programmer's UPDI bridge mode.
+			fprintf(stderr, "failed to return programmer to STK500 mode\n");
+			ok = false;
+		}
 		putchar('\n');
 		return ok;
 	}

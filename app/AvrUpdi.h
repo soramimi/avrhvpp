@@ -35,7 +35,8 @@ private:
 	bool wait_for_reset(int timeout_ms);
 	
 	bool enter_programming_mode();
-	void leave_programming_mode();
+	bool leave_programming_mode();
+	bool read_debug_signature(uint16_t addr);
 public:
 	void setup(const Operation *op, Connection *conn);
 	bool cmd_debug();

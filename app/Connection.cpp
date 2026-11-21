@@ -45,7 +45,10 @@ bool Connection::sync()
 			tmp[0] = ' ';
 			serial_.write(tmp, 1);
 			n = serial_.read(tmp, sizeof(tmp), BITBANG_MODE_TIMEOUT_MS);
-			if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) return true; // OK
+			if (n == 2 && tmp[0] == 0x14 && tmp[1] == 0x10) {
+				mode_ = STK500;
+				return true;
+			}
 		}
 		msleep(10);
 	}

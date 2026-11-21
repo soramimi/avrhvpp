@@ -49,8 +49,11 @@ void AvrUpdi::receive_all(int timeout_ms)
 
 void AvrUpdi::send_break()
 {
+	constexpr int bridge_break_ms = 50;
 	write_command(conn_, CMD_UPDI_BREAK);
-	receive_all(100);
+	// Drain the BREAK echo and leave time for the line to settle before SYNCH.
+	// The target may disable UPDI if SYNCH arrives too late after activation.
+	receive_all(bridge_break_ms + 1);
 }
 
 void AvrUpdi::send_byte(uint8_t c)
@@ -178,31 +181,42 @@ bool AvrUpdi::enter_programming_mode()
 	return true;
 }
 
-void AvrUpdi::leave_programming_mode()
+bool AvrUpdi::leave_programming_mode()
 {
-	// not implemented yet
+	bool reset_requested = write_control_status(0x08, 0x59); // ASI_RESET_REQ
+	// The target may be in reset even if the assertion echo was lost.
+	bool reset_released = write_control_status(0x08, 0x00);
+	bool updi_disabled = write_control_status(0x03, 0x0c); // CTRLB.CCDETDIS | UPDIDIS
+	if (!reset_requested || !reset_released || !updi_disabled) {
+		fprintf(stderr, "failed to verify UPDI programming mode cleanup\n");
+		return false;
+	}
+	return true;
 }
 
 bool AvrUpdi::cmd_debug()
 {
-	// Check that the UPDI link is functional by sending a break and configuring the UPDI interface. Retry up to 10 times if the link is not functional.
-	
-	{
-		int i = 0;
-		while (1) {
-			send_break();
-			receive_all(default_timeout());
-			if (configure_and_check_updi_link()) break;
-			if (i < 10) {
-				i++;
-			} else {
-				fprintf(stderr, "UPDI link is not functional; check the target device and connection\n");
-			}
+	int32_t addr = op_->target ? op_->target->sigrow_address() : -1;
+	if (addr == -1) {
+		fprintf(stderr, "UPDI debug requires --target with a signature row\n");
+		return false;
+	}
+
+	// Try the initial UPDI link setup, with up to ten retries.
+	for (int attempt = 0; attempt <= 10; ++attempt) {
+		send_break();
+		if (configure_and_check_updi_link()) {
+			bool signature_read = read_debug_signature(addr);
+			bool mode_left = leave_programming_mode();
+			return signature_read && mode_left;
 		}
 	}
-	
-	// for AVR64DD28
-	
+	fprintf(stderr, "UPDI link is not functional; check the target device and connection\n");
+	return false;
+}
+
+bool AvrUpdi::read_debug_signature(uint16_t addr)
+{
 	// Request the 32-byte System Information Block (SIB) to verify that the UPDI link is functional.
 	{
 		send_byte(0x55); // SYNCH frame before each UPDI instruction.
@@ -245,22 +259,13 @@ bool AvrUpdi::cmd_debug()
 	// Read the 24-bit device signature from the signature row.
 	
 	uint32_t sig = 0;
-	{
-		uint8_t tmp[3];
-		auto addr = op_->target->sigrow_address();
-		if (addr == -1) {
-			fprintf(stderr, "target does not have a signature row\n");
+	for (int i = 0; i < 3; ++i) {
+		int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2
+		if (c < 0) {
+			fprintf(stderr, "failed to read signature bytes\n");
 			return false;
 		}
-		int i = 0;
-		for (i = 0; i < 3; i++) {
-			int c = updi_LDS(addr++); // SIGROW.DEVICEID0, SIGROW.DEVICEID1, SIGROW.DEVICEID2
-			if (c < 0) break;
-			tmp[i] = c;
-		}
-		if (i == 3) {
-			sig = (tmp[0] << 16) | (tmp[1] << 8) | tmp[2];
-		}
+		sig = (sig << 8) | c;
 	}
 	
 	putchar('\n');

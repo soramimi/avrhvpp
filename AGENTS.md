@@ -62,8 +62,11 @@ cd app && g++ -std=c++17 -Wall main.cpp serial.cpp -o /tmp/avrhvpp   # ホスト
 
 ### 実験的なUPDI対応
 
-- UPDI対応は実装中で、ホストとファームウェア間のプロトコルは未確定です。現在のホスト側の対応は`--device updi --debug`によるAVR64DD28のシグネチャ3バイト取得です。
-- ホスト側は`app/main.cpp`の`AvrUpdi`で`updi_LDS()`、`updi_LDCS()`、`updi_STCS()`を使います。ファームウェア側は`.AVRUPDI.`でモードを切り替え、`firmware-atmega32u2/avrupdi.cpp`と`uart.cpp`でUSBとUPDI間のバイト転送を処理します。
+- UPDI対応は実装中で、ホストとファームウェア間のプロトコルは未確定です。現在は`--device updi --target attiny202 --debug`でATtiny202のシグネチャ3バイトを取得できます。
+- ホスト側は`app/AvrUpdi.cpp`で`updi_LDS()`、`updi_LDCS()`、`updi_STCS()`を使います。ファームウェア側は`.AVRUPDI.`でモードを切り替え、`firmware-atmega32u2/avrupdi.cpp`と`uart.cpp`でUSBとUPDI間のバイト転送を処理します。
+- リンク確立後は読み出しの成否にかかわらず、`leave_programming_mode()`でターゲットのリセットを要求・解除し、`UPDIDIS`でUPDIを無効化してから、プログラマをSTK500モードへ戻します。
+- ATtiny202のUPDI起動時は、プログラマが起動パルス後にUPDIラインの駆動を解除してから、最初の`SYNCH`（`0x55`）のスタートビットまでの`tDebZ`を200 µs～14 msの範囲に収め、ラインがHighに戻ったことを確認してから送信します。4 MHzで約16.4 msと記載されている値は内部タイムアウトです。通信復旧用BREAK自体の推奨長は、UPDIクロックが4 MHzで24.60 ms、8 MHzで12.30 ms、16 MHzで6.15 msです。[ATtiny202データシート（DS40002318A、§30.3.1.2、§30.3.2.1～3、表33-28）](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny202-204-402-404-406-DataSheet-DS40002318A.pdf)
+- 現行のブリッジは`CMD_UPDI_BREAK`でラインを50 ms Lowに保持し、ホストの`send_break()`はエコー受信の待ち時間を51 msに設定しています。51 msはUSB経由のホスト側設定で、`tDebZ`を評価するにはターゲットのUPDIピン上で駆動解除から`SYNCH`開始までを測ります。2026-11-21に`/dev/ttyACM0`経由のATtiny202実機で確認し、修正前は5回すべてで初回の`STATUSA`（`0x00`）読み出しに失敗しました。修正後は10回連続でエラーなく`0x1e9123`を取得しました。ピン上の波形は未計測です。
 - 既存のSTK500v1互換性テストではUPDIとUARTをスタブ化しています。UPDI通信を検証する自動テストはありません。
 
 ### 高電圧パラレルプログラミング
